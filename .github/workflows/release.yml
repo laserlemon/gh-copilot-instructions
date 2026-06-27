@@ -19,5 +19,8 @@ jobs:
           persist-credentials: false
       - uses: cli/gh-extension-precompile@v2
         with:
-          generate_attestations: true
+          # Build provenance attestations aren't available on user-owned PRIVATE
+          # repos, so only request them when the repo is public. This turns on
+          # automatically once the repository is made public — no edit needed.
+          generate_attestations: ${{ !github.event.repository.private }}
           go_version_file: go.mod
