@@ -16,10 +16,10 @@ import (
 //
 // Columns (TTY/TSV/JSON share this order):
 //
-// <state>  ID  REPO  REF  SHA  FILES  PULLED
+// <state>  ID  REPOSITORY  REF  SHA  FILES  PULLED
 //
 // The leading state column is an icon on a TTY (✓ pulled / - pending / ✗ failed)
-// and the state word when piped. ID is cyan; REPO/REF/SHA/FILES use the default
+// and the state word when piped. ID is cyan; REPOSITORY/REF/SHA/FILES use the default
 // foreground (REF is muted gray for "(default)"); PULLED is muted gray. FILES is
 // right-aligned. Headers are underlined gray.
 func (a *App) RenderList(asJSON, raw bool) error {
@@ -65,7 +65,7 @@ func (a *App) RenderList(asJSON, raw bool) error {
 		// underline like `gh pr checks`.
 		tp.AddField("", tableprinter.WithColor(cs.Header))
 		tp.AddField("ID", tableprinter.WithColor(cs.Header), padRight)
-		tp.AddField("REPO", tableprinter.WithColor(cs.Header), padRight)
+		tp.AddField("REPOSITORY", tableprinter.WithColor(cs.Header), padRight)
 		tp.AddField("REF", tableprinter.WithColor(cs.Header), padRight)
 		tp.AddField("SHA", tableprinter.WithColor(cs.Header), padRight)
 		tp.AddField("FILES", tableprinter.WithColor(cs.Header), padLeft)
