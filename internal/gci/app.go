@@ -317,7 +317,7 @@ type liveRow struct {
 }
 
 // animate pulls the targeted rows ONE AT A TIME (sequentially) while rendering
-// the live table: the current row shows a cyan spinner, rows queued behind it
+// the live table: the current row shows a yellow spinner, rows queued behind it
 // show the yellow "•" pending icon, finished rows settle to their final state,
 // and non-target rows render dimmed when dimOthers (the `add` focus effect) or
 // full-color static. Results are applied to st; returns the first pull error.
@@ -386,15 +386,19 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 			case lr.done:
 				views[idx] = rowView{Row: lr.final, updated: lr.updated}
 			case p == current: // actively pulling
-				rv := rows[idx]
-				rv.SHA = lr.sha
+				rv := rows[idx] // keeps the PREVIOUS sha until the new one resolves
+				resolved := lr.sha != ""
+				if resolved {
+					rv.SHA = lr.sha
+				}
 				rv.Files = lr.files
 				views[idx] = rowView{
-					Row:     rv,
-					loading: true,
-					spinner: spinnerFrames[frame%len(spinnerFrames)],
-					elapsed: elapsedSince(lr.start),
-					updated: lr.updated,
+					Row:         rv,
+					loading:     true,
+					spinner:     spinnerFrames[frame%len(spinnerFrames)],
+					elapsed:     elapsedSince(lr.start),
+					updated:     lr.updated,
+					shaResolved: resolved,
 				}
 			default: // queued behind the current row
 				views[idx] = rowView{Row: rows[idx], pending: true}

@@ -57,20 +57,26 @@ func (a *App) RenderList(asJSON, raw bool) error {
 // flags drive the `add`/`pull` variations:
 //   - dim: render every cell EXCEPT the state icon in muted gray (the
 //     non-target rows during `add`).
-//   - loading: animate this row — a cyan spinner in the state cell and an
-//     elapsed timer in PULLED; SHA and FILES are read live from the Row.
+//   - loading: animate this row — a yellow spinner in the state cell and an
+//     elapsed timer in PULLED; FILES is read live from the Row.
 //   - pending: this row is queued for pull (sequential pull) — show the yellow
 //     "•" pending icon, keeping its current data.
 //   - updated: an existing source's commit moved this pull — show the ↗ icon and
-//     render the SHA italic.
+//     render the (settled) SHA italic.
+//   - shaResolved: the new SHA has plopped in (a loading row shows the previous
+//     SHA in gray until this becomes true, then the new SHA in white).
+//
+// In-flight rows (loading or pending) render the SHA and FILES gray until the
+// row finishes, when they settle to the default foreground.
 type rowView struct {
 	Row
-	dim     bool
-	loading bool
-	pending bool
-	spinner string
-	elapsed string
-	updated bool
+	dim         bool
+	loading     bool
+	pending     bool
+	spinner     string
+	elapsed     string
+	updated     bool
+	shaResolved bool
 }
 
 // staticViews wraps rows as plain full-color views (the `list` table).
@@ -126,14 +132,14 @@ func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, c
 			}
 		}
 
-		// State icon (never dimmed): cyan spinner while loading, the yellow "•"
+		// State icon (never dimmed): yellow spinner while loading, the yellow "•"
 		// while queued for a sequential pull, else the semantic final icon. A
 		// successful pull distinguishes whether the commit moved: ↗ (green) when
 		// the SHA advanced, ✓ (green) when it was already current. Failed is ×.
 		if isTTY {
 			switch {
 			case v.loading:
-				tp.AddField(v.spinner, tableprinter.WithColor(cs.Cyan)) // gh's cyan spinner
+				tp.AddField(v.spinner, tableprinter.WithColor(cs.Yellow)) // matches the pending dot
 			case v.pending:
 				icon, color := stateIcon(StatePending, cs)
 				tp.AddField(icon, tableprinter.WithColor(color))
@@ -155,24 +161,32 @@ func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, c
 			addCell(refDisplay(r.Ref), nil)
 		}
 
-		// SHA: gray "-" until known; otherwise the default foreground, rendered
-		// italic when the commit moved this pull (the icon column also shows ↗).
+		// SHA: while a row is in flight it shows the PREVIOUS SHA in gray until
+		// the new one resolves ("plops in"), then the new SHA in white; a settled
+		// row is italic when the commit moved, plain otherwise; "-" (gray) when
+		// there's no SHA at all.
+		inFlight := v.loading || v.pending
 		shaText := shaCol(r.SHA)
-		if v.loading || v.pending {
+		if inFlight {
 			shaText = reserveWidth(shaText, shaDisplayWidth)
 		}
 		switch {
 		case r.SHA == "":
 			addCell(shaText, cs.Gray)
+		case inFlight && !v.shaResolved:
+			addCell(shaText, cs.Gray) // previous SHA, new one not in yet
+		case inFlight:
+			addCell(shaText, nil) // new SHA resolved -> white
 		case v.updated:
 			addCell(shaText, cs.Italic)
 		default:
 			addCell(shaText, nil)
 		}
 
-		// FILES: right-aligned; dimmed to gray on non-target rows.
+		// FILES: right-aligned; gray while in flight (or dimmed), white once the
+		// row has finished.
 		filesText := fmt.Sprintf("%d", r.Files)
-		if v.dim {
+		if v.dim || inFlight {
 			tp.AddField(filesText, tableprinter.WithColor(cs.Gray), padLeft)
 		} else {
 			tp.AddField(filesText, padLeft)

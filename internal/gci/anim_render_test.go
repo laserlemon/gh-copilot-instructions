@@ -36,32 +36,58 @@ func TestAnimatedRowRender(t *testing.T) {
 	}
 }
 
-// TestSHAColor verifies the SHA cell styling: gray "-" placeholder, italic when
-// changed, plain default when unchanged.
+// TestSHAColor verifies the SHA cell styling across the pull lifecycle: gray "-"
+// when absent; the previous SHA gray while loading-unresolved, then white once
+// the new SHA resolves; and on a settled row, italic when updated / plain when
+// not.
 func TestSHAColor(t *testing.T) {
 	a := &App{}
 	cs := &ColorScheme{enabled: true}
-	base := Row{State: StatePending, ID: "abc12345", Repo: "o/r", Files: 1}
 	full := "6de16bae1db0345805fe3399b45c1fdfdeb02544"
+	loading := func(r Row, resolved, updated bool) string {
+		return renderOne(a, cs, rowView{Row: r, loading: true, spinner: spinnerFrames[0], elapsed: "0s", shaResolved: resolved, updated: updated})
+	}
+	settled := func(updated bool) string {
+		return renderOne(a, cs, rowView{Row: Row{State: StatePulled, ID: "abc12345", Repo: "o/r", SHA: full, Files: 1, PulledAt: time.Now()}, updated: updated})
+	}
 
-	empty := renderOne(a, cs, rowView{Row: base, loading: true, spinner: spinnerFrames[0], elapsed: "0s"})
+	// No SHA at all -> gray "-".
+	empty := loading(Row{State: StatePending, ID: "abc12345", Repo: "o/r", Files: 1}, false, false)
 	if !strings.Contains(empty, ansiGray+"-") {
-		t.Errorf("empty SHA placeholder not gray: %q", empty)
+		t.Errorf("absent SHA not gray: %q", empty)
 	}
 
-	r := base
-	r.SHA = full
-	changed := renderOne(a, cs, rowView{Row: r, loading: true, spinner: spinnerFrames[0], elapsed: "0s", updated: true})
-	if !strings.Contains(changed, ansiItalic+"6de16bae") {
-		t.Errorf("changed SHA should be italic: %q", changed)
+	withSHA := Row{State: StatePending, ID: "abc12345", Repo: "o/r", SHA: full, Files: 1}
+	// Loading, new SHA not yet resolved -> previous SHA shown gray.
+	if prev := loading(withSHA, false, false); !strings.Contains(prev, ansiGray+"6de16bae") {
+		t.Errorf("loading-unresolved SHA should be gray (previous): %q", prev)
+	}
+	// Loading, new SHA resolved -> white, even when updated (no italic yet).
+	if res := loading(withSHA, true, true); strings.Contains(res, ansiGray+"6de16bae") || strings.Contains(res, ansiItalic+"6de16bae") {
+		t.Errorf("loading-resolved SHA should be plain white: %q", res)
 	}
 
-	unchanged := renderOne(a, cs, rowView{Row: r, loading: true, spinner: spinnerFrames[0], elapsed: "0s", updated: false})
-	if strings.Contains(unchanged, ansiItalic+"6de16bae") || strings.Contains(unchanged, ansiGray+"6de16bae") {
-		t.Errorf("unchanged SHA should be plain default-colored: %q", unchanged)
+	// Settled + updated -> italic; settled + unchanged -> plain.
+	if up := settled(true); !strings.Contains(up, ansiItalic+"6de16bae") {
+		t.Errorf("settled updated SHA should be italic: %q", up)
 	}
-	if !strings.Contains(unchanged, "6de16bae") {
-		t.Errorf("SHA missing: %q", unchanged)
+	if pl := settled(false); strings.Contains(pl, ansiItalic+"6de16bae") || strings.Contains(pl, ansiGray+"6de16bae") {
+		t.Errorf("settled unchanged SHA should be plain: %q", pl)
+	}
+}
+
+// TestSpinnerYellow verifies the loading spinner is yellow (matching the pending
+// dot) and the in-flight FILES count is gray.
+func TestSpinnerYellow(t *testing.T) {
+	a := &App{}
+	cs := &ColorScheme{enabled: true}
+	last := renderOne(a, cs, rowView{Row: Row{State: StatePending, ID: "abc12345", Repo: "o/r", Files: 7},
+		loading: true, spinner: spinnerFrames[0], elapsed: "0s"})
+	if !strings.Contains(last, ansiYellow+spinnerFrames[0]) {
+		t.Errorf("loading spinner should be yellow: %q", last)
+	}
+	if !strings.Contains(last, ansiGray+"    7") && !strings.Contains(last, ansiGray+"7") {
+		t.Errorf("in-flight FILES count should be gray: %q", last)
 	}
 }
 
