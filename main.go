@@ -25,7 +25,7 @@ func rootCmd() *cobra.Command {
 		Short: "Sync your Copilot custom instructions to every coding surface",
 		Long: "Pull your Copilot custom instructions from one or more repos into\n" +
 			"~/.copilot/instructions/, where Copilot CLI, VS Code, and the GitHub\n" +
-			"Copilot desktop app all read them automatically — no per-repo setup.",
+			"Copilot desktop app all read them automatically - no per-repo setup.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -87,7 +87,7 @@ func listCmd() *cobra.Command {
 		Short: "List configured sources and their pulled state",
 		Long: "List configured sources and their pulled state.\n\n" +
 			"Use --raw to print the sources in config-file format (one per line,\n" +
-			"including any inline tokens) — ready to paste into the multiline\n" +
+			"including any inline tokens) - ready to paste into the multiline\n" +
 			"GH_COPILOT_INSTRUCTIONS Codespaces secret.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

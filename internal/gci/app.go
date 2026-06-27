@@ -511,7 +511,7 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 	if healthy {
 		// Skip without any network call when the configured ref is an immutable
 		// commit-ish (≥7 hex digits) that is a left-pinned prefix of the SHA we
-		// already pulled — it can only point at that same commit.
+		// already pulled - it can only point at that same commit.
 		if refPinsTo(s.Ref, prev.SHA) {
 			return pullOutcome{row: a.rowForState(s, prev, true), newState: prev, skipped: true}
 		}

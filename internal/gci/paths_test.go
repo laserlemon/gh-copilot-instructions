@@ -15,7 +15,7 @@ func TestDefaultPathsSplitConfigAndState(t *testing.T) {
 	p := DefaultPaths()
 
 	// Config (user-edited) lives under ~/.config; state (machine-generated) lives
-	// under ~/.local/state — never under gh's own ~/.local/state/gh/extensions,
+	// under ~/.local/state - never under gh's own ~/.local/state/gh/extensions,
 	// which gh wipes on install/remove.
 	wantSources := filepath.Join(home, ".config", "gh-copilot-instructions", "sources")
 	if p.SourcesFile != wantSources {

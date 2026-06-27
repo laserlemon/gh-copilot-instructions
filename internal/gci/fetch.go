@@ -183,7 +183,7 @@ func isFullSHA(ref string) bool {
 }
 
 // refPinsTo reports whether a configured ref provably identifies the commit
-// recorded as sha — i.e. ref is at least 7 hex digits and a left-pinned prefix
+// recorded as sha - i.e. ref is at least 7 hex digits and a left-pinned prefix
 // of sha (case-insensitive). Such a ref is immutable, so a fresh pull can be
 // skipped. Examples (sha=e28eb6df72fb90a84015cb6fda9104bff345ae48):
 //

@@ -93,7 +93,7 @@ func (p Paths) writeFileSources(srcs []Source) error {
 		return err
 	}
 	var b strings.Builder
-	b.WriteString("# gh-copilot-instructions sources — one per line:\n")
+	b.WriteString("# gh-copilot-instructions sources - one per line:\n")
 	b.WriteString("#   owner/repo[@ref][:path]  [token]\n")
 	for _, s := range srcs {
 		b.WriteString(s.Line())

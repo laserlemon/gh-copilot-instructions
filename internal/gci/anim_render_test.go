@@ -91,8 +91,8 @@ func TestSpinnerYellow(t *testing.T) {
 	}
 }
 
-// TestDimRow verifies a dimmed row renders every cell gray EXCEPT the state icon,
-// which keeps its semantic color.
+// TestDimRow verifies a dimmed row renders every cell gray, INCLUDING the state
+// icon (same glyph, gray color).
 func TestDimRow(t *testing.T) {
 	a := &App{}
 	cs := &ColorScheme{enabled: true}
@@ -107,9 +107,12 @@ func TestDimRow(t *testing.T) {
 	if strings.Contains(last, ansiCyan+"abc12345") {
 		t.Errorf("dim ID should not be cyan: %q", last)
 	}
-	// The state icon keeps its color (PULLED => green ✓).
-	if !strings.Contains(last, ansiGreen+"✓") {
-		t.Errorf("dim row should keep its colored state icon: %q", last)
+	// The state icon is dimmed gray too (same ✓ glyph, no green).
+	if !strings.Contains(last, ansiGray+iconPulled) {
+		t.Errorf("dim row icon should be gray: %q", last)
+	}
+	if strings.Contains(last, ansiGreen+iconPulled) {
+		t.Errorf("dim row icon should not keep its green color: %q", last)
 	}
 }
 
@@ -162,7 +165,7 @@ func TestMovedIcon(t *testing.T) {
 
 // TestAnimatedSHAReservesWidthSingleRow verifies that, when the in-progress row
 // is the only row, the SHA column is the same width before and after the SHA
-// fills in — so populating it doesn't shift the FILES/PULLED columns.
+// fills in - so populating it doesn't shift the FILES/PULLED columns.
 func TestAnimatedSHAReservesWidthSingleRow(t *testing.T) {
 	a := &App{}
 	cs := &ColorScheme{enabled: false}

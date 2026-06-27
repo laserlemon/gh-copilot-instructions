@@ -55,13 +55,13 @@ func (a *App) RenderList(asJSON, raw bool) error {
 
 // rowView is one row's render input. By default a row renders in full color; the
 // flags drive the `add`/`pull` variations:
-//   - dim: render every cell EXCEPT the state icon in muted gray (the
-//     non-target rows during `add`).
-//   - loading: animate this row — a yellow spinner in the state cell and an
+//   - dim: render the ENTIRE row, including its state icon, in muted gray (the
+//     non-target rows during `add`); the icon keeps its glyph, just gray.
+//   - loading: animate this row - a yellow spinner in the state cell and an
 //     elapsed timer in PULLED; FILES is read live from the Row.
-//   - pending: this row is queued for pull (sequential pull) — show the yellow
+//   - pending: this row is queued for pull (sequential pull) - show the yellow
 //     "•" pending icon, keeping its current data.
-//   - updated: an existing source's commit moved this pull — show the ↗ icon and
+//   - updated: an existing source's commit moved this pull - show the ↗ icon and
 //     render the (settled) SHA italic.
 //   - shaResolved: the new SHA has plopped in (a loading row shows the previous
 //     SHA in gray until this becomes true, then the new SHA in white).
@@ -132,23 +132,27 @@ func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, c
 			}
 		}
 
-		// State icon (never dimmed): yellow spinner while loading, the yellow "•"
-		// while queued for a sequential pull, else the semantic final icon. A
-		// successful pull distinguishes whether the commit moved: ↗ (green) when
-		// the SHA advanced, ✓ (green) when it was already current. Failed is ×.
+		// State icon: yellow spinner while loading, the yellow "•" while queued,
+		// else the semantic final icon (↗ moved / ✓ unchanged / • pending / ×
+		// failed). A dimmed row keeps the same glyph but renders it gray like the
+		// rest of the row.
 		if isTTY {
+			var glyph string
+			var color func(string) string
 			switch {
 			case v.loading:
-				tp.AddField(v.spinner, tableprinter.WithColor(cs.Yellow)) // matches the pending dot
+				glyph, color = v.spinner, cs.Yellow // matches the pending dot
 			case v.pending:
-				icon, color := stateIcon(StatePending, cs)
-				tp.AddField(icon, tableprinter.WithColor(color))
+				glyph, color = stateIcon(StatePending, cs)
 			case r.State == StatePulled && v.updated:
-				tp.AddField(iconMoved, tableprinter.WithColor(cs.Green))
+				glyph, color = iconMoved, cs.Green
 			default:
-				icon, color := stateIcon(r.State, cs)
-				tp.AddField(icon, tableprinter.WithColor(color))
+				glyph, color = stateIcon(r.State, cs)
 			}
+			if v.dim {
+				color = cs.Gray
+			}
+			tp.AddField(glyph, tableprinter.WithColor(color))
 		} else {
 			tp.AddField(r.State)
 		}
@@ -238,7 +242,7 @@ func (a *App) renderListJSON(rows []Row) error {
 	return enc.Encode(items)
 }
 
-// renderRaw prints the configured sources in config-file format — one canonical
+// renderRaw prints the configured sources in config-file format - one canonical
 // line per source (`owner/repo[@ref][:path]  [token]`), no header, color, or
 // comments. This is the value to paste into a multiline GH_COPILOT_INSTRUCTIONS
 // Codespaces secret. Inline tokens are included so private sources work where
