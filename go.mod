@@ -1,6 +1,6 @@
 module github.com/laserlemon/gh-copilot-instructions
 
-go 1.26.4
+go 1.25.0
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
