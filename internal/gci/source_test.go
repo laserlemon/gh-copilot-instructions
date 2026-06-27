@@ -1,0 +1,139 @@
+package gci
+
+import "testing"
+
+func TestParseSpec(t *testing.T) {
+	cases := []struct {
+		in              string
+		repo, ref, path string
+		wantErr         bool
+	}{
+		{in: "laserlemon/my-instructions", repo: "laserlemon/my-instructions"},
+		{in: "acme/standards@main", repo: "acme/standards", ref: "main"},
+		{in: "acme/standards@release/2026", repo: "acme/standards", ref: "release/2026"},
+		{in: "o/r:instructions/*.md", repo: "o/r", path: "instructions/*.md"},
+		{in: "o/r@main:**/*.instructions.md", repo: "o/r", ref: "main", path: "**/*.instructions.md"},
+		{in: "o/r:/leading/slash.md", repo: "o/r", path: "leading/slash.md"},
+		{in: "o/r@feat/x:dir/**", repo: "o/r", ref: "feat/x", path: "dir/**"},
+		{in: "noslash", wantErr: true},
+		{in: "", wantErr: true},
+		{in: "a/b/c", wantErr: true},
+	}
+	for _, c := range cases {
+		s, err := ParseSpec(c.in)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("ParseSpec(%q): expected error", c.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("ParseSpec(%q): %v", c.in, err)
+			continue
+		}
+		if s.Repo != c.repo || s.Ref != c.ref || s.Path != c.path {
+			t.Errorf("ParseSpec(%q) = {%q,%q,%q}, want {%q,%q,%q}", c.in, s.Repo, s.Ref, s.Path, c.repo, c.ref, c.path)
+		}
+	}
+}
+
+func TestParseLine(t *testing.T) {
+	s, ok, err := ParseLine("  o/r@main:**/*.md   ghp_TOKEN123  ")
+	if err != nil || !ok {
+		t.Fatalf("ParseLine err=%v ok=%v", err, ok)
+	}
+	if s.Repo != "o/r" || s.Ref != "main" || s.Path != "**/*.md" || s.Token != "ghp_TOKEN123" {
+		t.Fatalf("got %+v", s)
+	}
+	for _, blank := range []string{"", "   ", "# comment", "  # c"} {
+		if _, ok, _ := ParseLine(blank); ok {
+			t.Errorf("ParseLine(%q): expected skip", blank)
+		}
+	}
+}
+
+func TestIDDeterministicAndUnique(t *testing.T) {
+	a, _ := ParseSpec("o/r")
+	b, _ := ParseSpec("o/r")
+	if a.ID() != b.ID() {
+		t.Errorf("same spec -> different id: %s vs %s", a.ID(), b.ID())
+	}
+	if len(a.ID()) != 8 {
+		t.Errorf("id length = %d, want 8", len(a.ID()))
+	}
+	seen := map[string]string{}
+	for _, spec := range []string{"o/r", "o/r@main", "o/r:p", "o/r2", "o2/r", "o/r@main:p"} {
+		s, _ := ParseSpec(spec)
+		if prev, ok := seen[s.ID()]; ok {
+			t.Errorf("id collision: %q and %q -> %s", prev, spec, s.ID())
+		}
+		seen[s.ID()] = spec
+	}
+}
+
+func TestRoundTripLine(t *testing.T) {
+	s, _ := ParseSpec("o/r@main:**/*.instructions.md")
+	s.Token = "tok"
+	again, ok, err := ParseLine(s.Line())
+	if err != nil || !ok {
+		t.Fatalf("re-parse: err=%v ok=%v", err, ok)
+	}
+	if again.ID() != s.ID() || again.Token != "tok" {
+		t.Fatalf("round-trip mismatch: %+v vs %+v", again, s)
+	}
+}
+
+func TestMatches(t *testing.T) {
+	def, _ := ParseSpec("o/r") // default **/*.instructions.md
+	yes := []string{"general.instructions.md", "a/b/ruby.instructions.md"}
+	no := []string{"README.md", ".github/copilot-instructions.md", "notes.txt"}
+	for _, p := range yes {
+		if !def.matches(p) {
+			t.Errorf("default should match %q", p)
+		}
+	}
+	for _, p := range no {
+		if def.matches(p) {
+			t.Errorf("default should NOT match %q", p)
+		}
+	}
+
+	glob, _ := ParseSpec("o/r:instructions/*.md")
+	if !glob.matches("instructions/foo.md") || glob.matches("instructions/sub/bar.md") {
+		t.Errorf("single-star glob behaved unexpectedly")
+	}
+
+	dir, _ := ParseSpec("o/r:rules")
+	if !dir.matches("rules/a.md") || !dir.matches("rules/x/y.md") {
+		t.Errorf("dir path should match nested *.md")
+	}
+
+	file, _ := ParseSpec("o/r:docs/one.instructions.md")
+	if !file.matches("docs/one.instructions.md") {
+		t.Errorf("exact file path should match itself")
+	}
+}
+
+func TestDestFile(t *testing.T) {
+	s, _ := ParseSpec("o/r")
+	got := s.DestFile("instructions/ruby.instructions.md")
+	want := FilePrefix + "." + s.ID() + ".instructions-ruby.instructions.md"
+	if got != want {
+		t.Errorf("DestFile = %q, want %q", got, want)
+	}
+	if got := s.DestFile("commit-messages.md"); got != FilePrefix+"."+s.ID()+".commit-messages.instructions.md" {
+		t.Errorf("plain .md mapping wrong: %q", got)
+	}
+}
+
+func TestIsOurs(t *testing.T) {
+	s, _ := ParseSpec("o/r")
+	if !isOurs(s.DestFile("x.instructions.md")) {
+		t.Error("our file should be recognized")
+	}
+	for _, n := range []string{"my-own.instructions.md", "random.md", "gh-copilot-instructions.md"} {
+		if isOurs(n) {
+			t.Errorf("%q should NOT be considered ours", n)
+		}
+	}
+}
