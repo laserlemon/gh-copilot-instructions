@@ -581,29 +581,48 @@ func TestPullFilterTargetsOneSource(t *testing.T) {
 	}
 }
 
-func TestWriteJSONJQ(t *testing.T) {
+func TestWriteJSONCompact(t *testing.T) {
 	a := newTestApp(t, &fakeFetcher{})
 	var buf bytes.Buffer
 	a.Out = &buf
-	a.JQ = ".[].id"
-	if err := a.writeJSON([]sourceJSON{{ID: "abc"}, {ID: "def"}}); err != nil {
+	// A non-TTY App (the test default) writes compact JSON plus one newline.
+	if err := a.writeJSON([]sourceJSON{{State: "pulled", ID: "abc", Repo: "o/r"}}); err != nil {
 		t.Fatal(err)
 	}
-	got := strings.Fields(buf.String())
-	if len(got) != 2 || !strings.Contains(got[0], "abc") || !strings.Contains(got[1], "def") {
-		t.Errorf("jq output = %q, want abc then def", buf.String())
+	got := buf.String()
+	if strings.Contains(got, "\n  ") {
+		t.Errorf("piped JSON should be compact, got:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "}]\n") {
+		t.Errorf("piped JSON should end with a single trailing newline, got %q", got)
 	}
 }
 
-func TestWriteJSONTemplate(t *testing.T) {
+func TestWriteJSONFieldSelection(t *testing.T) {
 	a := newTestApp(t, &fakeFetcher{})
 	var buf bytes.Buffer
 	a.Out = &buf
-	a.Template = "{{range .}}{{.id}};{{end}}"
-	if err := a.writeJSON([]sourceJSON{{ID: "abc"}, {ID: "def"}}); err != nil {
+	a.JSONFields = []string{"repo", "sha"} // canonical order is repo before sha
+	src := []sourceJSON{{State: "pulled", ID: "abc", Repo: "o/r", SHA: "deadbeef", Files: 3}}
+	if err := a.writeJSON(src); err != nil {
 		t.Fatal(err)
 	}
-	if got := buf.String(); got != "abc;def;" {
-		t.Errorf("template output = %q, want abc;def;", got)
+	got := strings.TrimSpace(buf.String())
+	want := `[{"repo":"o/r","sha":"deadbeef"}]`
+	if got != want {
+		t.Errorf("field selection = %s, want %s", got, want)
+	}
+}
+
+func TestValidateJSONFields(t *testing.T) {
+	if err := ValidateJSONFields(nil); err != nil {
+		t.Errorf("bare --json (no fields) should be valid, got %v", err)
+	}
+	if err := ValidateJSONFields([]string{"repo", "sha"}); err != nil {
+		t.Errorf("known fields should be valid, got %v", err)
+	}
+	err := ValidateJSONFields([]string{"repo", "bogus"})
+	if err == nil || !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("unknown field should error naming it, got %v", err)
 	}
 }
