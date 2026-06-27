@@ -1,6 +1,7 @@
 package gci
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cli/go-gh/v2/pkg/jq"
+	ghtemplate "github.com/cli/go-gh/v2/pkg/template"
 	"github.com/cli/go-gh/v2/pkg/term"
 )
 
@@ -33,6 +36,11 @@ type App struct {
 	Out   io.Writer    // data (stdout)
 	Err   io.Writer    // progress / messages (stderr)
 	CS    *ColorScheme // color scheme for Err (stderr) messages
+
+	// JSON output post-processors, mirroring gh's --jq/--template. At most one
+	// is set; both are empty for plain (indented) JSON.
+	JQ       string // a jq expression applied to the JSON output
+	Template string // a Go template applied to the JSON output
 }
 
 // New returns an App with default paths and the real API fetcher.
@@ -260,11 +268,32 @@ func pullResultFor(s Source, out pullOutcome) sourceJSON {
 	return r
 }
 
-// writeJSON encodes v as indented JSON to stdout.
+// writeJSON encodes v as indented JSON to stdout. When a --jq expression or
+// --template is set (mirroring gh), the JSON is piped through it instead.
 func (a *App) writeJSON(v any) error {
-	enc := json.NewEncoder(a.Out)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
+	buf, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	buf = append(buf, '\n')
+	switch {
+	case a.JQ != "":
+		return jq.Evaluate(bytes.NewReader(buf), a.Out, a.JQ)
+	case a.Template != "":
+		t := term.FromEnv()
+		w, _, _ := t.Size()
+		tmpl := ghtemplate.New(a.Out, w, t.IsColorEnabled())
+		if err := tmpl.Parse(a.Template); err != nil {
+			return err
+		}
+		if err := tmpl.Execute(bytes.NewReader(buf)); err != nil {
+			return err
+		}
+		return tmpl.Flush()
+	default:
+		_, err = a.Out.Write(buf)
+		return err
+	}
 }
 
 // tableEnv returns the color scheme and width for the animated table.
