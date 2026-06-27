@@ -99,7 +99,7 @@ func (a *App) Add(s Source) error {
 			a.fail("%s: %v", s.Repo, perr)
 			return perr
 		}
-		a.printCovered()
+		a.printCovered(s.ID())
 		return nil
 	}
 
@@ -121,7 +121,7 @@ func (a *App) Add(s Source) error {
 		a.fail("%s: %v", s.Repo, perr)
 		return perr
 	}
-	a.printCovered()
+	a.printCovered(s.ID())
 	return nil
 }
 
@@ -277,7 +277,7 @@ func (a *App) Pull(filter string) error {
 	if err := a.Paths.Save(st); err != nil {
 		return err
 	}
-	a.printCovered()
+	a.printCovered("")
 	return firstErr
 }
 
@@ -543,10 +543,17 @@ func (a *App) ListRows() ([]Row, ConfigOrigin, error) {
 	return rows, origin, nil
 }
 
-func (a *App) printCovered() {
+// printCovered prints the post-pull footer. When id is non-empty (a single
+// source, as in `add`) it points at that source's install directory; otherwise
+// (a full `pull`) it points at the base install directory.
+func (a *App) printCovered(id string) {
 	cs := a.cs()
+	dir := a.Paths.InstallDir
+	if id != "" {
+		dir = filepath.Join(a.Paths.InstallDir, FileDir, id)
+	}
 	a.msg("")
-	a.msg("%s %s", cs.SuccessIcon(), cs.Gray("Instructions installed to: "+a.Paths.InstallDir))
+	a.msg("%s %s", cs.SuccessIcon(), cs.Gray("Instructions installed to: "+dir))
 }
 
 func pluralFiles(n int) string {
