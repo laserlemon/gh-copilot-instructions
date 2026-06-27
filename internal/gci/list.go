@@ -26,31 +26,47 @@ func (a *App) RenderList(asJSON bool) error {
 	if w <= 0 {
 		w = 80
 	}
+	cs := &ColorScheme{enabled: t.IsColorEnabled(), has256: t.Is256ColorSupported()}
 
 	if len(rows) == 0 {
-		a.msg("No sources configured (%s).", origin)
-		a.msg("Add one with: gh copilot-instructions add <owner/repo[:path]>")
+		a.dim("No sources configured (%s).", origin)
+		a.dim("Add one with: gh copilot-instructions add <owner/repo[:path]>")
 		return nil
 	}
 
 	tp := tableprinter.New(a.Out, isTTY, w)
 	if isTTY {
+		headerColor := func(s string) string { return cs.Gray(s) }
 		for _, h := range []string{"ID", "REPO", "REF", "SHA", "PULLED", "TOKEN", "FILES"} {
-			tp.AddField(h)
+			tp.AddField(h, tableprinter.WithColor(headerColor))
 		}
 		tp.EndRow()
 	}
 	for _, r := range rows {
-		tp.AddField(r.ID)
+		tp.AddField(r.ID, tableprinter.WithColor(cs.Cyan))
 		tp.AddField(r.Repo)
-		tp.AddField(refOrDefault(r.Ref))
-		tp.AddField(shaCol(r.SHA))
-		tp.AddField(pulledCol(r.PulledAt, isTTY))
-		tp.AddField(tokenCol(r.HasToken))
+		tp.AddField(refOrDefault(r.Ref), tableprinter.WithColor(refColor(r.Ref, cs)))
+		tp.AddField(shaCol(r.SHA), tableprinter.WithColor(cs.Gray))
+		tp.AddField(pulledCol(r.PulledAt, isTTY), tableprinter.WithColor(cs.Gray))
+		tp.AddField(tokenCol(r.HasToken), tableprinter.WithColor(tokenColor(r.HasToken, cs)))
 		tp.AddField(fmt.Sprintf("%d", r.Files))
 		tp.EndRow()
 	}
 	return tp.Render()
+}
+
+func refColor(ref string, cs *ColorScheme) func(string) string {
+	if ref == "" {
+		return cs.Gray // "(default)" is muted
+	}
+	return cs.Magenta
+}
+
+func tokenColor(has bool, cs *ColorScheme) func(string) string {
+	if has {
+		return cs.Green
+	}
+	return cs.Gray
 }
 
 type listJSONItem struct {

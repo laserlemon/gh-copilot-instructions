@@ -20,17 +20,46 @@ type fetcher interface {
 type App struct {
 	Paths Paths
 	F     fetcher
-	Out   io.Writer // data (stdout)
-	Err   io.Writer // progress / messages (stderr)
+	Out   io.Writer    // data (stdout)
+	Err   io.Writer    // progress / messages (stderr)
+	CS    *ColorScheme // color scheme for Err (stderr) messages
 }
 
 // New returns an App with default paths and the real API fetcher.
 func New(out, errw io.Writer) *App {
-	return &App{Paths: DefaultPaths(), F: Fetcher{}, Out: out, Err: errw}
+	_, errCS := newSchemes()
+	return &App{Paths: DefaultPaths(), F: Fetcher{}, Out: out, Err: errw, CS: errCS}
+}
+
+func (a *App) cs() *ColorScheme {
+	if a.CS == nil {
+		return &ColorScheme{} // disabled (e.g. in tests)
+	}
+	return a.CS
 }
 
 func (a *App) msg(format string, args ...any) {
 	fmt.Fprintf(a.Err, format+"\n", args...)
+}
+
+// success prints a green-check status line.
+func (a *App) success(format string, args ...any) {
+	a.msg("%s %s", a.cs().SuccessIcon(), fmt.Sprintf(format, args...))
+}
+
+// warn prints a yellow-bang status line.
+func (a *App) warn(format string, args ...any) {
+	a.msg("%s %s", a.cs().WarningIcon(), fmt.Sprintf(format, args...))
+}
+
+// fail prints a red-cross status line.
+func (a *App) fail(format string, args ...any) {
+	a.msg("%s %s", a.cs().FailureIcon(), fmt.Sprintf(format, args...))
+}
+
+// dim prints muted secondary text.
+func (a *App) dim(format string, args ...any) {
+	a.msg("%s", a.cs().Gray(fmt.Sprintf(format, args...)))
 }
 
 // Add upserts a source into the local config file and then pulls.
@@ -38,9 +67,9 @@ func (a *App) Add(s Source) error {
 	if err := a.Paths.AddSource(s); err != nil {
 		return err
 	}
-	a.msg("Added %s [%s]", s.Spec(), s.ID())
+	a.success("Added %s %s", a.cs().Bold(s.Spec()), a.cs().Gray("("+s.ID()+")"))
 	if EnvSet() {
-		a.msg("note: %s is set and overrides the config file; this entry takes effect once that variable is unset.", EnvSources)
+		a.warn("%s is set and overrides the config file; this entry applies once that variable is unset.", EnvSources)
 	}
 	return a.Pull("")
 }
@@ -53,7 +82,7 @@ func (a *App) Pull(filter string) error {
 		a.msg("%v", err) // report malformed lines but continue with the rest
 	}
 	if origin == OriginNone || len(srcs) == 0 {
-		a.msg("No sources configured. Add one with: gh copilot-instructions add <owner/repo[:path]>")
+		a.dim("No sources configured. Add one with: gh copilot-instructions add <owner/repo[:path]>")
 		return nil
 	}
 	st, err := a.Paths.LoadState()
@@ -71,7 +100,7 @@ func (a *App) Pull(filter string) error {
 			if firstErr == nil {
 				firstErr = err
 			}
-			a.msg("error: %s: %v", s.Repo, err)
+			a.fail("%s: %v", s.Repo, err)
 		}
 	}
 	if filter != "" && !matched {
@@ -91,7 +120,7 @@ func (a *App) pullOne(s Source, st *State) error {
 		return err
 	}
 	if prev, ok := st.Sources[id]; ok && prev.SHA == sha && a.allFilesExist(prev.Files) {
-		a.msg("  %s  up to date (%s)", s.Repo, short(sha))
+		a.dim("  %s  up to date (%s)", s.Repo, short(sha))
 		return nil
 	}
 	gotSHA, files, err := a.F.Fetch(s)
@@ -102,7 +131,7 @@ func (a *App) pullOne(s Source, st *State) error {
 		sha = gotSHA
 	}
 	if len(files) == 0 {
-		a.msg("  %s  warning: no files matched %q", s.Repo, s.effectivePath())
+		a.warn("%s  no files matched %s", a.cs().Bold(s.Repo), a.cs().Gray(s.effectivePath()))
 	}
 	var installed []string
 	for _, f := range files {
@@ -125,7 +154,7 @@ func (a *App) pullOne(s Source, st *State) error {
 		PulledAt: time.Now().UTC(),
 		Files:    installed,
 	}
-	a.msg("  %s  pulled %d file(s) (%s)", s.Repo, len(installed), short(sha))
+	a.success("%s  %s (%s)", a.cs().Bold(s.Repo), pluralFiles(len(installed)), a.cs().Gray(short(sha)))
 	return nil
 }
 
@@ -182,12 +211,12 @@ func (a *App) Remove(idOrRepo string) error {
 		return err
 	}
 	if len(removedFromFile) == 0 && len(removedIDs) == 0 {
-		a.msg("No source matched %q.", idOrRepo)
+		a.dim("No source matched %q.", idOrRepo)
 		return nil
 	}
-	a.msg("Removed %q.", idOrRepo)
+	a.success("Removed %s", a.cs().Bold(idOrRepo))
 	if EnvSet() && len(removedFromFile) > 0 {
-		a.msg("note: %s is set and overrides the config file.", EnvSources)
+		a.warn("%s is set and overrides the config file.", EnvSources)
 	}
 	return nil
 }
@@ -215,8 +244,8 @@ func (a *App) RemoveAll() error {
 	if err := a.Paths.Save(&State{Sources: map[string]SourceState{}}); err != nil {
 		return err
 	}
-	a.msg("Removed all configured sources and every installed file.")
-	a.msg("To remove the command itself: gh extension remove gh-copilot-instructions")
+	a.success("Removed all configured sources and every installed file.")
+	a.dim("To remove the command itself: gh extension remove gh-copilot-instructions")
 	return nil
 }
 
@@ -261,10 +290,18 @@ func (a *App) ListRows() ([]Row, ConfigOrigin, error) {
 }
 
 func (a *App) printCovered() {
+	cs := a.cs()
 	a.msg("")
-	a.msg("Instructions installed to %s", a.Paths.InstallDir)
-	a.msg("Now applied automatically in: Copilot CLI, VS Code (local/Remote/Codespaces), the GitHub Copilot desktop app.")
-	a.msg("Reload VS Code / restart the desktop app to pick up changes.")
+	a.msg("%s instructions installed to %s", cs.SuccessIcon(), cs.Bold(a.Paths.InstallDir))
+	a.dim("Applied automatically in Copilot CLI, VS Code (local/Remote/Codespaces), and the GitHub Copilot desktop app.")
+	a.dim("Reload VS Code / restart the desktop app to pick up changes.")
+}
+
+func pluralFiles(n int) string {
+	if n == 1 {
+		return "pulled 1 file"
+	}
+	return fmt.Sprintf("pulled %d files", n)
 }
 
 func isOurs(name string) bool {
