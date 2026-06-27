@@ -122,11 +122,22 @@ never touch your own hand-written `~/.copilot/instructions/*.instructions.md` fi
 
 ## Development
 
+Iterate on the extension locally without cutting a release. A **dev (symlink) install**
+points `gh` at your working copy, so a rebuilt binary takes effect immediately:
+
 ```bash
-go build -o gh-copilot-instructions .
-gh extension install .          # install your local build
-go test ./...
+make dev     # build + symlink-install: `gh copilot-instructions ...` now runs your local build
+make         # rebuild after each change (the symlink picks it up; no reinstall, no tag)
+make test    # go test ./...
+make release # switch back to the published release build
 ```
+
+Under the hood `make dev` runs `gh extension install .`, which symlinks
+`~/.local/share/gh/extensions/gh-copilot-instructions` to this repo and runs the
+`gh-copilot-instructions` binary you build here. Because our state lives in its own
+`~/.local/state/gh-copilot-instructions/` namespace (not under gh's
+`~/.local/state/gh/extensions/`, which gh wipes on install/remove), switching between dev
+and release builds never disturbs your pulled state.
 
 Releases are built by the `cli/gh-extension-precompile` workflow on pushing a `v*` tag, which
 attaches per-platform binaries so `gh extension install` works everywhere.
