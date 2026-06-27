@@ -115,20 +115,31 @@ func (a *App) Pull(filter string) error {
 
 func (a *App) pullOne(s Source, st *State) error {
 	id := s.ID()
-	sha, err := a.F.ResolveSHA(s)
+	prev, hasPrev := st.Sources[id]
+	healthy := hasPrev && a.allFilesExist(prev.Files)
+
+	if healthy {
+		// Skip without any network call when the configured ref is an immutable
+		// commit-ish (≥7 hex digits) that is a left-pinned prefix of the SHA we
+		// already pulled — it can only point at that same commit.
+		if refPinsTo(s.Ref, prev.SHA) {
+			a.dim("  %s  up to date (%s)", s.Repo, short(prev.SHA))
+			return nil
+		}
+		// Otherwise resolve the current tip (one API call) and compare.
+		sha, err := a.F.ResolveSHA(s)
+		if err != nil {
+			return err
+		}
+		if prev.SHA == sha {
+			a.dim("  %s  up to date (%s)", s.Repo, short(sha))
+			return nil
+		}
+	}
+
+	sha, files, err := a.F.Fetch(s)
 	if err != nil {
 		return err
-	}
-	if prev, ok := st.Sources[id]; ok && prev.SHA == sha && a.allFilesExist(prev.Files) {
-		a.dim("  %s  up to date (%s)", s.Repo, short(sha))
-		return nil
-	}
-	gotSHA, files, err := a.F.Fetch(s)
-	if err != nil {
-		return err
-	}
-	if gotSHA != "" {
-		sha = gotSHA
 	}
 	if len(files) == 0 {
 		a.warn("%s  no files matched %s", a.cs().Bold(s.Repo), a.cs().Gray(s.effectivePath()))
@@ -142,7 +153,7 @@ func (a *App) pullOne(s Source, st *State) error {
 		installed = append(installed, name)
 	}
 	// Prune this source's files that are no longer produced.
-	if prev, ok := st.Sources[id]; ok {
+	if hasPrev {
 		a.prune(prev.Files, installed)
 	}
 	sort.Strings(installed)

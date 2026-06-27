@@ -60,7 +60,10 @@ func (a *App) RenderList(asJSON, raw bool) error {
 
 	tp := tableprinter.New(a.Out, isTTY, w)
 	if isTTY {
-		tp.AddField("") // state column: no header label
+		// Empty state-column header: the tableprinter pads it to the column
+		// width (one space) and the color underlines it, giving a single-space
+		// underline like `gh pr checks`.
+		tp.AddField("", tableprinter.WithColor(cs.Header))
 		tp.AddField("ID", tableprinter.WithColor(cs.Header), padRight)
 		tp.AddField("REPO", tableprinter.WithColor(cs.Header), padRight)
 		tp.AddField("REF", tableprinter.WithColor(cs.Header), padRight)

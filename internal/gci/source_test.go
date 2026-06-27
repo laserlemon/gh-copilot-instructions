@@ -137,3 +137,29 @@ func TestIsOurs(t *testing.T) {
 		}
 	}
 }
+
+func TestRefPinsTo(t *testing.T) {
+	const sha = "e28eb6df72fb90a84015cb6fda9104bff345ae48"
+	cases := []struct {
+		ref  string
+		want bool
+	}{
+		{"e28eb6d", true}, // ≥7 hex, prefix
+		{"e28eb6df72fb90a84015cb6fda9104bff345ae48", true}, // full SHA
+		{"E28EB6D", true},  // case-insensitive
+		{"e28eb6", false},  // only 6 hex digits
+		{"345ae48", false}, // hex, but a suffix
+		{"main", false},    // not hex
+		{"", false},        // empty (default branch)
+		{"deadbee", false}, // ≥7 hex but not a prefix
+	}
+	for _, c := range cases {
+		if got := refPinsTo(c.ref, sha); got != c.want {
+			t.Errorf("refPinsTo(%q, sha) = %v, want %v", c.ref, got, c.want)
+		}
+	}
+	// No recorded SHA yet => never pins.
+	if refPinsTo("e28eb6d", "") {
+		t.Error("refPinsTo with empty sha should be false")
+	}
+}

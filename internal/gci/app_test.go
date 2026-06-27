@@ -304,3 +304,38 @@ func mustState(t *testing.T, a *App) *State {
 	}
 	return st
 }
+
+func TestPullSkipsViaShaPrefixWithoutNetwork(t *testing.T) {
+	// Source pinned to a 7-hex prefix of the commit it resolves to.
+	src, _ := ParseSpec("o/r@e28eb6d")
+	id := src.ID()
+	f := &fakeFetcher{
+		sha:   map[string]string{id: "e28eb6df72fb90a84015cb6fda9104bff345ae48"},
+		files: map[string][]FetchedFile{id: {{Rel: "a.instructions.md", Content: []byte("a")}}},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(src); err != nil {
+		t.Fatal(err)
+	}
+
+	// First pull fetches once and records the full SHA.
+	if err := a.Pull(""); err != nil {
+		t.Fatal(err)
+	}
+	if f.fetches != 1 {
+		t.Fatalf("first pull fetches = %d, want 1", f.fetches)
+	}
+	resolvesAfterFirst := f.resolves
+
+	// Second pull must skip with NO network at all: the pinned ref is a prefix
+	// of the recorded SHA, so neither ResolveSHA nor Fetch should be called.
+	if err := a.Pull(""); err != nil {
+		t.Fatal(err)
+	}
+	if f.fetches != 1 {
+		t.Errorf("second pull triggered a fetch (fetches=%d)", f.fetches)
+	}
+	if f.resolves != resolvesAfterFirst {
+		t.Errorf("second pull made a ResolveSHA call (resolves went %d -> %d)", resolvesAfterFirst, f.resolves)
+	}
+}

@@ -153,12 +153,12 @@ func decodeBlob(b blobResponse) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(clean)
 }
 
-// isFullSHA reports whether ref is a full 40-character hex commit SHA (immutable).
-func isFullSHA(ref string) bool {
-	if len(ref) != 40 {
+// isHex reports whether s is non-empty and made up entirely of hex digits.
+func isHex(s string) bool {
+	if s == "" {
 		return false
 	}
-	for _, c := range ref {
+	for _, c := range s {
 		switch {
 		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
 		default:
@@ -166,4 +166,25 @@ func isFullSHA(ref string) bool {
 		}
 	}
 	return true
+}
+
+// isFullSHA reports whether ref is a full 40-character hex commit SHA (immutable).
+func isFullSHA(ref string) bool {
+	return len(ref) == 40 && isHex(ref)
+}
+
+// refPinsTo reports whether a configured ref provably identifies the commit
+// recorded as sha — i.e. ref is at least 7 hex digits and a left-pinned prefix
+// of sha (case-insensitive). Such a ref is immutable, so a fresh pull can be
+// skipped. Examples (sha=e28eb6df72fb90a84015cb6fda9104bff345ae48):
+//
+//	ref=e28eb6d  -> true   (≥7 hex, prefix of sha)
+//	ref=e28eb6   -> false  (only 6 hex digits)
+//	ref=345ae48  -> false  (hex, but a suffix, not a prefix)
+//	ref=main     -> false  (not hex)
+func refPinsTo(ref, sha string) bool {
+	if len(ref) < 7 || !isHex(ref) || sha == "" {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(sha), strings.ToLower(ref))
 }
