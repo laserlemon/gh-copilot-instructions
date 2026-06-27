@@ -40,16 +40,19 @@ func newTestApp(t *testing.T, f fetcher) *App {
 
 func instDir(a *App) string { return a.Paths.InstallDir }
 
+// ls returns the relative paths of all files (recursively) under dir, so tests
+// see our nested-layout install files regardless of directory depth.
 func ls(t *testing.T, dir string) []string {
 	t.Helper()
 	var names []string
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return names
-	}
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(dir, p)
+		names = append(names, rel)
+		return nil
+	})
 	return names
 }
 
@@ -109,6 +112,43 @@ func TestPullInstallSkipPrune(t *testing.T) {
 	}
 	if f.fetches != 3 {
 		t.Fatalf("missing-file should re-pull, fetches=%d", f.fetches)
+	}
+}
+
+func TestPullCollisionKeepsFirst(t *testing.T) {
+	src, _ := ParseSpec("o/r:**")
+	id := src.ID()
+	// "foo", "foo.md", and "foo.instructions.md" all normalize to the same
+	// install name. By lexicographic path "foo" sorts first, but the suffix
+	// priority must keep "foo.instructions.md" instead.
+	f := &fakeFetcher{
+		sha: map[string]string{id: "sha0000000000000000000000000000000000000"},
+		files: map[string][]FetchedFile{id: {
+			{Rel: "foo", Content: []byte("from-bare")},
+			{Rel: "foo.md", Content: []byte("from-md")},
+			{Rel: "foo.instructions.md", Content: []byte("from-instructions")},
+		}},
+	}
+	a := newTestApp(t, f)
+	var errBuf bytes.Buffer
+	a.Err = &errBuf
+	if err := a.Paths.AddSource(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull(""); err != nil {
+		t.Fatal(err)
+	}
+	got := ls(t, instDir(a))
+	if len(got) != 1 {
+		t.Fatalf("collision should install exactly one file, got %v", got)
+	}
+	// ".instructions.md" beats ".md" beats bare, regardless of path ordering.
+	data, _ := os.ReadFile(filepath.Join(instDir(a), filepath.FromSlash(src.DestPath("foo.instructions.md"))))
+	if string(data) != "from-instructions" {
+		t.Errorf("expected the .instructions.md source to win, content = %q", data)
+	}
+	if !strings.Contains(errBuf.String(), "both map to") {
+		t.Errorf("expected a collision warning, stderr = %q", errBuf.String())
 	}
 }
 
@@ -287,7 +327,7 @@ func TestListRowState(t *testing.T) {
 	// Installed file removed out from under us => FAILED.
 	for _, ss := range mustState(t, a).Sources {
 		for _, fn := range ss.Files {
-			os.Remove(filepath.Join(a.Paths.InstallDir, fn))
+			os.Remove(filepath.Join(a.Paths.InstallDir, filepath.FromSlash(fn)))
 		}
 	}
 	rows, _, _ = a.ListRows()

@@ -25,9 +25,10 @@ type Source struct {
 // DefaultPath is used when a source omits an explicit path.
 const DefaultPath = "**/*.instructions.md"
 
-// FilePrefix marks every file this tool installs, so prune/remove never touch
-// the user's own hand-written instruction files.
-const FilePrefix = "gh-copilot-instructions"
+// FileDir is the namespace directory, under ~/.copilot/instructions, that holds
+// every file this tool installs. Keeping our files under a single directory means
+// prune/remove never touch the user's own hand-written instruction files.
+const FileDir = "gh-copilot-instructions"
 
 // ParseSpec parses an "owner/repo[@ref][:path]" source spec (no token).
 func ParseSpec(spec string) (Source, error) {

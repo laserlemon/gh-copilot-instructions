@@ -114,22 +114,46 @@ func TestMatches(t *testing.T) {
 	}
 }
 
-func TestDestFile(t *testing.T) {
+func TestDestPath(t *testing.T) {
 	s, _ := ParseSpec("o/r")
-	got := s.DestFile("instructions/ruby.instructions.md")
-	want := FilePrefix + "." + s.ID() + ".instructions-ruby.instructions.md"
-	if got != want {
-		t.Errorf("DestFile = %q, want %q", got, want)
+	id := s.ID()
+	cases := []struct {
+		rel  string
+		want string
+	}{
+		// Already-correct names are preserved verbatim (common case).
+		{"instructions/ruby.instructions.md", FileDir + "/" + id + "/instructions/ruby.instructions.md"},
+		// A plain .md file is normalized to a clean ".instructions.md" name.
+		{"commit-messages.md", FileDir + "/" + id + "/commit-messages.instructions.md"},
+		// Extensionless files get the full suffix.
+		{"AGENTS", FileDir + "/" + id + "/AGENTS.instructions.md"},
+		// Deep directory structure is preserved.
+		{"a/b/c/x.instructions.md", FileDir + "/" + id + "/a/b/c/x.instructions.md"},
+		// A leading slash is normalized away.
+		{"/top.instructions.md", FileDir + "/" + id + "/top.instructions.md"},
 	}
-	if got := s.DestFile("commit-messages.md"); got != FilePrefix+"."+s.ID()+".commit-messages.instructions.md" {
-		t.Errorf("plain .md mapping wrong: %q", got)
+	for _, c := range cases {
+		if got := s.DestPath(c.rel); got != c.want {
+			t.Errorf("DestPath(%q) = %q, want %q", c.rel, got, c.want)
+		}
+	}
+	// Paths that escape the namespace are rejected.
+	if got := s.DestPath("../evil.instructions.md"); got != "" {
+		t.Errorf("DestPath with .. = %q, want \"\"", got)
 	}
 }
 
 func TestIsOurs(t *testing.T) {
 	s, _ := ParseSpec("o/r")
-	if !isOurs(s.DestFile("x.instructions.md")) {
-		t.Error("our file should be recognized")
+	// New nested layout and a legacy flat file are both recognized as ours.
+	ours := []string{
+		s.DestPath("x.instructions.md"),
+		FileDir + ".abc12345.x.instructions.md",
+	}
+	for _, n := range ours {
+		if !isOurs(n) {
+			t.Errorf("%q should be recognized as ours", n)
+		}
 	}
 	for _, n := range []string{"my-own.instructions.md", "random.md", "gh-copilot-instructions.md"} {
 		if isOurs(n) {

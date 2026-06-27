@@ -1,6 +1,7 @@
 package gci
 
 import (
+	"path"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -39,32 +40,58 @@ func (s Source) matches(rel string) bool {
 	return false
 }
 
-// destName maps a matched repo-relative path to the installed filename's
-// "<name>" segment: path separators become dashes and the trailing
-// ".instructions.md"/".md" suffix is dropped.
-func destName(rel string) string {
-	rel = strings.TrimPrefix(rel, "/")
+// namePriority ranks a matched file for collision resolution when several files
+// normalize to the same install name. Lower is preferred: a file that already
+// ends in ".instructions.md" wins over a ".md" file, which wins over anything
+// else (a bare or other-suffixed name). Ties are broken lexicographically by the
+// repo-relative path, so the outcome is always deterministic.
+func namePriority(rel string) int {
 	switch {
 	case strings.HasSuffix(rel, ".instructions.md"):
-		rel = strings.TrimSuffix(rel, ".instructions.md")
+		return 0
 	case strings.HasSuffix(rel, ".md"):
-		rel = strings.TrimSuffix(rel, ".md")
+		return 1
+	default:
+		return 2
 	}
-	rel = strings.ReplaceAll(rel, "/", "-")
-	var b strings.Builder
-	for _, r := range rel {
-		switch {
-		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	return b.String()
 }
 
-// DestFile returns the installed filename for a source + matched repo path,
-// e.g. "gh-copilot-instructions.a1b2c3d4.instructions-ruby.instructions.md".
-func (s Source) DestFile(rel string) string {
-	return FilePrefix + "." + s.ID() + "." + destName(rel) + ".instructions.md"
+// instructionsName normalizes a file's base name to a clean ".instructions.md"
+// form (the suffix Copilot requires to auto-load it): drop a trailing ".md",
+// then a trailing ".instructions", then append ".instructions.md". This is
+// idempotent and yields the tidiest possible names:
+//
+//	ruby.instructions.md -> ruby.instructions.md
+//	ruby.md              -> ruby.instructions.md
+//	ruby                 -> ruby.instructions.md
+//
+// Two distinct source names can now normalize to the same result (e.g. "ruby.md"
+// and "ruby.instructions.md"); callers detect that collision and keep just one.
+func instructionsName(name string) string {
+	base := strings.TrimSuffix(name, ".md")
+	base = strings.TrimSuffix(base, ".instructions")
+	return base + ".instructions.md"
+}
+
+// DestPath returns the install path (relative to ~/.copilot/instructions, with
+// forward slashes) for a source + matched repo-relative path. It preserves the
+// repo's directory structure under a per-source namespace and ensures the file
+// ends in ".instructions.md":
+//
+//	gh-copilot-instructions/<id>/<repo-relative-dir>/<name>.instructions.md
+//
+// Returns "" for an unsafe path (one containing a ".." component).
+func (s Source) DestPath(rel string) string {
+	rel = strings.TrimPrefix(rel, "/")
+	dir, file := path.Split(rel)
+	clean := path.Clean(dir)
+	if clean == "." {
+		clean = ""
+	}
+	for _, seg := range strings.Split(clean, "/") {
+		if seg == ".." {
+			return ""
+		}
+	}
+	return path.Join(FileDir, s.ID(), clean, instructionsName(file))
 }

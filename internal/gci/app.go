@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -144,13 +145,37 @@ func (a *App) pullOne(s Source, st *State) error {
 	if len(files) == 0 {
 		a.warn("%s  no files matched %s", a.cs().Bold(s.Repo), a.cs().Gray(s.effectivePath()))
 	}
+	// Order files so that, when two normalize to the same install name, the
+	// choice of which to keep is deterministic and explainable: prefer the file
+	// that already ends in ".instructions.md", then ".md", then anything else;
+	// ties break on the lexicographically lowest repo path. Keeping the first
+	// occurrence per install name then implements that policy.
+	sort.Slice(files, func(i, j int) bool {
+		pi, pj := namePriority(files[i].Rel), namePriority(files[j].Rel)
+		if pi != pj {
+			return pi < pj
+		}
+		return files[i].Rel < files[j].Rel
+	})
 	var installed []string
+	seen := map[string]string{} // dest path -> repo path that produced it
 	for _, f := range files {
-		name := s.DestFile(f.Rel)
-		if err := a.writeInstall(name, f.Content); err != nil {
+		rel := s.DestPath(f.Rel)
+		if rel == "" {
+			a.warn("%s  skipped unsafe path %s", a.cs().Bold(s.Repo), a.cs().Gray(f.Rel))
+			continue
+		}
+		if first, dup := seen[rel]; dup {
+			a.warn("%s  %s and %s both map to %s; keeping %s",
+				a.cs().Bold(s.Repo), a.cs().Gray(first), a.cs().Gray(f.Rel),
+				a.cs().Gray(path.Base(rel)), a.cs().Gray(first))
+			continue
+		}
+		seen[rel] = f.Rel
+		if err := a.writeInstall(rel, f.Content); err != nil {
 			return err
 		}
-		installed = append(installed, name)
+		installed = append(installed, rel)
 	}
 	// Prune this source's files that are no longer produced.
 	if hasPrev {
@@ -169,23 +194,27 @@ func (a *App) pullOne(s Source, st *State) error {
 	return nil
 }
 
-func (a *App) writeInstall(name string, content []byte) error {
-	if err := os.MkdirAll(a.Paths.InstallDir, 0o755); err != nil {
+// writeInstall writes one file at a forward-slash dest path relative to the
+// install dir, creating parent directories as needed (the nested layout).
+func (a *App) writeInstall(rel string, content []byte) error {
+	dest := filepath.Join(a.Paths.InstallDir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(a.Paths.InstallDir, name), content, 0o644)
+	return os.WriteFile(dest, content, 0o644)
 }
 
 func (a *App) allFilesExist(files []string) bool {
 	for _, f := range files {
-		if _, err := os.Stat(filepath.Join(a.Paths.InstallDir, f)); err != nil {
+		if _, err := os.Stat(filepath.Join(a.Paths.InstallDir, filepath.FromSlash(f))); err != nil {
 			return false
 		}
 	}
 	return len(files) > 0
 }
 
-// prune removes files in old that are not in keep (only our own files).
+// prune removes files in old that are not in keep (only our own files), then
+// tidies up any directories left empty under the install dir.
 func (a *App) prune(old, keep []string) {
 	keepSet := map[string]bool{}
 	for _, k := range keep {
@@ -195,7 +224,21 @@ func (a *App) prune(old, keep []string) {
 		if keepSet[f] || !isOurs(f) {
 			continue
 		}
-		os.Remove(filepath.Join(a.Paths.InstallDir, f))
+		os.Remove(filepath.Join(a.Paths.InstallDir, filepath.FromSlash(f)))
+		a.removeEmptyParents(f)
+	}
+}
+
+// removeEmptyParents removes now-empty directories from a file's parent upward,
+// stopping at the install dir (never removing it or anything outside it).
+func (a *App) removeEmptyParents(rel string) {
+	base := filepath.Clean(a.Paths.InstallDir)
+	dir := filepath.Dir(filepath.Join(base, filepath.FromSlash(rel)))
+	for dir != base && strings.HasPrefix(dir, base+string(filepath.Separator)) {
+		if err := os.Remove(dir); err != nil {
+			return // non-empty or error: stop walking up
+		}
+		dir = filepath.Dir(dir)
 	}
 }
 
@@ -214,6 +257,7 @@ func (a *App) Remove(idOrRepo string) error {
 	for id, ss := range st.Sources {
 		if id == idOrRepo || ss.Repo == idOrRepo {
 			a.prune(ss.Files, nil)
+			os.RemoveAll(filepath.Join(a.Paths.InstallDir, FileDir, id))
 			delete(st.Sources, id)
 			removedIDs = append(removedIDs, id)
 		}
@@ -241,10 +285,13 @@ func (a *App) RemoveAll() error {
 	for _, ss := range st.Sources {
 		a.prune(ss.Files, nil)
 	}
-	// Belt and suspenders: remove any stray prefix-owned files too.
+	// Remove the entire namespace directory (nested layout).
+	os.RemoveAll(filepath.Join(a.Paths.InstallDir, FileDir))
+	// Belt and suspenders: remove any stray files we own, including legacy
+	// flat-layout files from older versions.
 	if entries, err := os.ReadDir(a.Paths.InstallDir); err == nil {
 		for _, e := range entries {
-			if isOurs(e.Name()) {
+			if !e.IsDir() && isOurs(e.Name()) {
 				os.Remove(filepath.Join(a.Paths.InstallDir, e.Name()))
 			}
 		}
@@ -329,8 +376,15 @@ func pluralFiles(n int) string {
 	return fmt.Sprintf("pulled %d files", n)
 }
 
+// isOurs reports whether a path (relative to the install dir) is one we manage,
+// so prune/remove never touch the user's own hand-written instruction files. It
+// recognizes both the nested layout ("gh-copilot-instructions/<id>/...") and
+// legacy flat files ("gh-copilot-instructions.<id>.<name>.instructions.md").
 func isOurs(name string) bool {
-	return strings.HasPrefix(name, FilePrefix+".") && strings.HasSuffix(name, ".instructions.md")
+	name = filepath.ToSlash(name)
+	nested := strings.HasPrefix(name, FileDir+"/")
+	legacy := strings.HasPrefix(name, FileDir+".")
+	return (nested || legacy) && strings.HasSuffix(name, ".instructions.md")
 }
 
 // short abbreviates a commit SHA for display. gh's convention is 8 characters
