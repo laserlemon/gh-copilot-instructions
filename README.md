@@ -27,10 +27,14 @@ or restart the desktop app to pick up changes).
 gh copilot-instructions add <owner/repo[@ref][:path]> [--token T]   # add a source, then pull
 gh copilot-instructions add --repo R [--ref REF] [--path P] [--token T]
 gh copilot-instructions pull [<id | owner/repo>]                    # pull all configured sources, or just one
-gh copilot-instructions list [--json | --raw]                       # show sources and their pulled state
+gh copilot-instructions list [--raw]                                # show sources and their pulled state
 gh copilot-instructions remove <id | owner/repo>                    # remove one source and prune its files
 gh copilot-instructions remove --all                                # remove every source, all installed files, and config
 ```
+
+Every command accepts `--json` for machine-readable output, plus `--jq <expression>` and
+`--template <string>` to filter or format that JSON (the same flags built-in `gh` commands use; see
+`gh help formatting`).
 
 - **`add`** takes a positional spec, the equivalent flags, or a mix (a flag overrides the matching
   part of the spec). A glob `path` must be quoted. Paths are repo-root-relative (a leading `/` is fine).
