@@ -182,7 +182,7 @@ func TestRemoveAllLeavesUserFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := a.RemoveAll(); err != nil {
+	if err := a.RemoveAll(false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(userFile); err != nil {
@@ -220,7 +220,7 @@ func TestRemoveOneByRepo(t *testing.T) {
 	if len(ls(t, instDir(a))) != 2 {
 		t.Fatalf("setup: want 2 files, got %v", ls(t, instDir(a)))
 	}
-	if err := a.Remove("o/one"); err != nil {
+	if err := a.Remove("o/one", false); err != nil {
 		t.Fatal(err)
 	}
 	files := ls(t, instDir(a))
@@ -461,5 +461,122 @@ func TestPullJSON(t *testing.T) {
 	// A default-branch ref is rendered as "-" (a usable GitHub blob URL ref).
 	if refs["o/new"] != "-" {
 		t.Errorf("default-branch ref = %q, want \"-\"", refs["o/new"])
+	}
+}
+
+func TestAddJSON(t *testing.T) {
+	s, _ := ParseSpec("o/added")
+	a := newTestApp(t, &fakeFetcher{
+		sha:   map[string]string{s.ID(): "sha1111111111111111111111111111111111111"},
+		files: map[string][]FetchedFile{s.ID(): {{Rel: "a.instructions.md", Content: []byte("a")}}},
+	})
+	var buf bytes.Buffer
+	a.Out = &buf
+	if err := a.Add(s, true); err != nil {
+		t.Fatal(err)
+	}
+	var res []map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &res); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
+	}
+	if len(res) != 1 {
+		t.Fatalf("add --json: want 1 element, got %d", len(res))
+	}
+	if res[0]["repo"] != "o/added" || res[0]["state"] != "pulled" {
+		t.Errorf("add --json element = %v, want repo o/added state pulled", res[0])
+	}
+}
+
+func TestRemoveJSONReturnsRemaining(t *testing.T) {
+	s1, _ := ParseSpec("o/one")
+	s2, _ := ParseSpec("o/two")
+	a := newTestApp(t, &fakeFetcher{
+		sha: map[string]string{s1.ID(): "111", s2.ID(): "222"},
+		files: map[string][]FetchedFile{
+			s1.ID(): {{Rel: "a.instructions.md", Content: []byte("a")}},
+			s2.ID(): {{Rel: "b.instructions.md", Content: []byte("b")}},
+		},
+	})
+	if err := a.Paths.AddSource(s1); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Paths.AddSource(s2); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	a.Out = &buf
+	if err := a.Remove("o/one", true); err != nil {
+		t.Fatal(err)
+	}
+	var res []map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &res); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
+	}
+	if len(res) != 1 {
+		t.Fatalf("remove --json: want 1 remaining source, got %d: %s", len(res), buf.String())
+	}
+	if res[0]["repo"] != "o/two" {
+		t.Errorf("remaining source = %v, want o/two", res[0]["repo"])
+	}
+}
+
+func TestRemoveAllJSONReturnsEmptyArray(t *testing.T) {
+	s, _ := ParseSpec("o/one")
+	a := newTestApp(t, &fakeFetcher{
+		sha:   map[string]string{s.ID(): "111"},
+		files: map[string][]FetchedFile{s.ID(): {{Rel: "a.instructions.md", Content: []byte("a")}}},
+	})
+	if err := a.Paths.AddSource(s); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	a.Out = &buf
+	if err := a.RemoveAll(true); err != nil {
+		t.Fatal(err)
+	}
+	// Must be an empty JSON array, never null.
+	if got := strings.TrimSpace(buf.String()); got != "[]" {
+		t.Errorf("remove --all --json = %q, want []", got)
+	}
+}
+
+func TestPullFilterTargetsOneSource(t *testing.T) {
+	s1, _ := ParseSpec("o/one")
+	s2, _ := ParseSpec("o/two")
+	f := &fakeFetcher{
+		sha: map[string]string{s1.ID(): "111", s2.ID(): "222"},
+		files: map[string][]FetchedFile{
+			s1.ID(): {{Rel: "a.instructions.md", Content: []byte("a")}},
+			s2.ID(): {{Rel: "b.instructions.md", Content: []byte("b")}},
+		},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(s1); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Paths.AddSource(s2); err != nil {
+		t.Fatal(err)
+	}
+	// A filtered pull --json must touch (and report) only the matched source.
+	var buf bytes.Buffer
+	a.Out = &buf
+	if err := a.Pull("o/one", true); err != nil {
+		t.Fatal(err)
+	}
+	var res []map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &res); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
+	}
+	if len(res) != 1 || res[0]["repo"] != "o/one" {
+		t.Fatalf("pull o/one --json = %s, want only o/one", buf.String())
+	}
+	if f.fetches != 1 {
+		t.Errorf("fetches = %d, want 1 (only the matched source)", f.fetches)
 	}
 }
