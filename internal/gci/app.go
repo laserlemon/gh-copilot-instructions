@@ -76,12 +76,13 @@ func (a *App) dim(format string, args ...any) {
 // On a terminal it renders the full instructions table with that row animating
 // (spinner + live SHA/FILES + elapsed) while every other row is dimmed, settling
 // the row to its final state when the pull completes. Off a terminal it prints
-// plain progress lines.
-func (a *App) Add(s Source) error {
+// plain progress lines. With asJSON it pulls quietly and emits a one-element JSON
+// array with the added source's result.
+func (a *App) Add(s Source, asJSON bool) error {
 	if err := a.Paths.AddSource(s); err != nil {
 		return err
 	}
-	if EnvSet() {
+	if EnvSet() && !asJSON {
 		a.warn("%s is set and overrides the config file; this entry applies once that variable is unset.", EnvSources)
 	}
 	st, err := a.Paths.LoadState()
@@ -90,10 +91,25 @@ func (a *App) Add(s Source) error {
 	}
 
 	srcs, _, lerr := a.Paths.LoadSources()
-	if lerr != nil {
+	if lerr != nil && !asJSON {
 		a.msg("%v", lerr)
 	}
 	target := indexOfID(srcs, s.ID())
+
+	if asJSON {
+		prev, has := st.Sources[s.ID()]
+		out := a.pullSource(s, prev, has, nil)
+		if out.err == nil {
+			st.Sources[s.ID()] = out.newState
+		}
+		if e := a.Paths.Save(st); e != nil {
+			return e
+		}
+		if err := a.writeJSON([]sourceJSON{pullResultFor(s, out)}); err != nil {
+			return err
+		}
+		return out.err
+	}
 
 	t := term.FromEnv()
 	if !t.IsTerminalOutput() || target < 0 {
@@ -138,7 +154,7 @@ func (a *App) Pull(filter string, asJSON bool) error {
 	}
 	if origin == OriginNone || len(srcs) == 0 {
 		if asJSON {
-			return a.writeJSON([]pullResultJSON{})
+			return a.writeJSON([]sourceJSON{})
 		}
 		a.dim("No sources configured. Add one with: gh copilot-instructions add <owner/repo[:path]>")
 		return nil
@@ -159,7 +175,7 @@ func (a *App) Pull(filter string, asJSON bool) error {
 	}
 
 	if asJSON {
-		results := make([]pullResultJSON, 0, len(targets))
+		results := make([]sourceJSON, 0, len(targets))
 		var firstErr error
 		for _, i := range targets {
 			s := srcs[i]
@@ -208,8 +224,9 @@ func (a *App) Pull(filter string, asJSON bool) error {
 
 	rows := a.rowsFor(srcs, st)
 	cs, w := a.tableEnv(t)
-	// Pull never dims: targeted rows animate, the rest render full-color static.
-	err = a.animate(rows, srcs, targets, false, st, cs, w)
+	// A filtered pull focuses the matched rows (and dims the rest), like add; an
+	// unfiltered pull animates every row with no dimming.
+	err = a.animate(rows, srcs, targets, filter != "", st, cs, w)
 	if e := a.Paths.Save(st); e != nil {
 		return e
 	}
@@ -220,23 +237,11 @@ func (a *App) Pull(filter string, asJSON bool) error {
 	return err
 }
 
-// pullResultJSON is one source's result in `pull --json` output (field order
-// matches the table columns).
-type pullResultJSON struct {
-	State    string `json:"state"` // "pulled", "updated", or "failed"
-	ID       string `json:"id"`
-	Repo     string `json:"repo"`
-	Ref      string `json:"ref"`
-	SHA      string `json:"sha"`
-	Files    int    `json:"files"`
-	PulledAt string `json:"pulledAt"`
-}
-
 // pullResultFor maps a pull outcome to its JSON result. "updated" means an
 // existing source's commit moved; a brand-new source or an unchanged SHA is
 // "pulled"; an error or a broken/empty install is "failed".
-func pullResultFor(s Source, out pullOutcome) pullResultJSON {
-	r := pullResultJSON{ID: s.ID(), Repo: s.Repo, Ref: refJSON(s.Ref)}
+func pullResultFor(s Source, out pullOutcome) sourceJSON {
+	r := sourceJSON{ID: s.ID(), Repo: s.Repo, Ref: refJSON(s.Ref)}
 	switch {
 	case out.err != nil || out.row.State == StateFailed:
 		r.State = "failed"
@@ -634,7 +639,8 @@ func (a *App) removeEmptyParents(rel string) {
 
 // Remove deletes sources matching idOrRepo from the config file and prunes their
 // installed files (by id), regardless of whether the config came from file/env.
-func (a *App) Remove(idOrRepo string) error {
+// With asJSON it emits a JSON array of the remaining sources (like `list --json`).
+func (a *App) Remove(idOrRepo string, asJSON bool) error {
 	removedFromFile, err := a.Paths.RemoveSource(idOrRepo)
 	if err != nil {
 		return err
@@ -655,6 +661,9 @@ func (a *App) Remove(idOrRepo string) error {
 	if err := a.Paths.Save(st); err != nil {
 		return err
 	}
+	if asJSON {
+		return a.renderRemainingJSON()
+	}
 	if len(removedFromFile) == 0 && len(removedIDs) == 0 {
 		a.dim("No source matched %q.", idOrRepo)
 		return nil
@@ -666,8 +675,19 @@ func (a *App) Remove(idOrRepo string) error {
 	return nil
 }
 
+// renderRemainingJSON emits the current source list as JSON (the same shape as
+// `list --json`); used by remove/remove --all to report the post-removal state.
+func (a *App) renderRemainingJSON() error {
+	rows, _, err := a.ListRows()
+	if err != nil {
+		return err
+	}
+	return a.renderListJSON(rows)
+}
+
 // RemoveAll clears all configured sources and removes every file we installed.
-func (a *App) RemoveAll() error {
+// With asJSON it emits a JSON array of the remaining sources (always empty).
+func (a *App) RemoveAll(asJSON bool) error {
 	st, err := a.Paths.LoadState()
 	if err != nil {
 		return err
@@ -691,6 +711,9 @@ func (a *App) RemoveAll() error {
 	}
 	if err := a.Paths.Save(&State{Sources: map[string]SourceState{}}); err != nil {
 		return err
+	}
+	if asJSON {
+		return a.renderRemainingJSON()
 	}
 	a.success("Removed all configured sources and every installed file.")
 	a.dim("To remove the command itself: gh extension remove gh-copilot-instructions")

@@ -2,7 +2,6 @@ package gci
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -214,8 +213,11 @@ func (a *App) renderViews(views []rowView, width int, cs *ColorScheme) []string 
 	return strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
 }
 
-// listJSONItem field order matches the TTY/TSV column order.
-type listJSONItem struct {
+// sourceJSON is one source's JSON representation, shared by every command's
+// --json output (field order matches the TTY/TSV columns). State is lowercase:
+// list reports "pulled"/"pending"/"failed"; pull/add report
+// "pulled"/"updated"/"failed"; remove reports "removed".
+type sourceJSON struct {
 	State    string `json:"state"`
 	ID       string `json:"id"`
 	Repo     string `json:"repo"`
@@ -226,20 +228,18 @@ type listJSONItem struct {
 }
 
 func (a *App) renderListJSON(rows []Row) error {
-	items := make([]listJSONItem, 0, len(rows))
+	items := make([]sourceJSON, 0, len(rows))
 	for _, r := range rows {
 		pulled := ""
 		if !r.PulledAt.IsZero() {
 			pulled = r.PulledAt.Format(time.RFC3339)
 		}
-		items = append(items, listJSONItem{
-			State: r.State, ID: r.ID, Repo: r.Repo, Ref: refJSON(r.Ref), SHA: r.SHA,
-			Files: r.Files, PulledAt: pulled,
+		items = append(items, sourceJSON{
+			State: strings.ToLower(r.State), ID: r.ID, Repo: r.Repo, Ref: refJSON(r.Ref),
+			SHA: r.SHA, Files: r.Files, PulledAt: pulled,
 		})
 	}
-	enc := json.NewEncoder(a.Out)
-	enc.SetIndent("", "  ")
-	return enc.Encode(items)
+	return a.writeJSON(items)
 }
 
 // renderRaw prints the configured sources in config-file format - one canonical
@@ -305,7 +305,7 @@ const shaDisplayWidth = 8
 
 func shaCol(sha string) string {
 	if sha == "" {
-		return "-"
+		return "~" // null SHA (distinct from the ref column's "-" default-branch marker)
 	}
 	return short(sha)
 }

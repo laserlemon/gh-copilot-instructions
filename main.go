@@ -37,6 +37,7 @@ func newApp() *gci.App { return gci.New(os.Stdout, os.Stderr) }
 
 func addCmd() *cobra.Command {
 	var repo, ref, path, token string
+	var asJSON bool
 	c := &cobra.Command{
 		Use:   "add [<owner/repo[@ref][:path]>]",
 		Short: "Add a source and pull it",
@@ -52,13 +53,14 @@ func addCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return newApp().Add(s)
+			return newApp().Add(s, asJSON)
 		},
 	}
 	c.Flags().StringVar(&repo, "repo", "", "Source repository (owner/repo)")
 	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repo's default branch)")
 	c.Flags().StringVar(&path, "path", "", "Glob/file/dir within the repo (default: **/*.instructions.md)")
 	c.Flags().StringVar(&token, "token", "", "Token for a private source (default: your gh auth)")
+	c.Flags().BoolVar(&asJSON, "json", false, `Output JSON (the added source's state: "pulled", "updated", or "failed")`)
 	return c
 }
 
@@ -103,7 +105,7 @@ func listCmd() *cobra.Command {
 }
 
 func removeCmd() *cobra.Command {
-	var all bool
+	var all, asJSON bool
 	c := &cobra.Command{
 		Use:   "remove [<id | owner/repo>]",
 		Short: "Remove one source (and prune its files), or --all",
@@ -114,15 +116,16 @@ func removeCmd() *cobra.Command {
 				if len(args) > 0 {
 					return fmt.Errorf("--all takes no argument")
 				}
-				return app.RemoveAll()
+				return app.RemoveAll(asJSON)
 			}
 			if len(args) != 1 {
 				return fmt.Errorf("specify an <id | owner/repo> to remove, or --all")
 			}
-			return app.Remove(args[0])
+			return app.Remove(args[0], asJSON)
 		},
 	}
 	c.Flags().BoolVar(&all, "all", false, "Remove every source, all installed files, and config")
+	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON (the remaining sources, like list --json)")
 	return c
 }
 
