@@ -580,3 +580,30 @@ func TestPullFilterTargetsOneSource(t *testing.T) {
 		t.Errorf("fetches = %d, want 1 (only the matched source)", f.fetches)
 	}
 }
+
+func TestWriteJSONJQ(t *testing.T) {
+	a := newTestApp(t, &fakeFetcher{})
+	var buf bytes.Buffer
+	a.Out = &buf
+	a.JQ = ".[].id"
+	if err := a.writeJSON([]sourceJSON{{ID: "abc"}, {ID: "def"}}); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Fields(buf.String())
+	if len(got) != 2 || !strings.Contains(got[0], "abc") || !strings.Contains(got[1], "def") {
+		t.Errorf("jq output = %q, want abc then def", buf.String())
+	}
+}
+
+func TestWriteJSONTemplate(t *testing.T) {
+	a := newTestApp(t, &fakeFetcher{})
+	var buf bytes.Buffer
+	a.Out = &buf
+	a.Template = "{{range .}}{{.id}};{{end}}"
+	if err := a.writeJSON([]sourceJSON{{ID: "abc"}, {ID: "def"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "abc;def;" {
+		t.Errorf("template output = %q, want abc;def;", got)
+	}
+}
