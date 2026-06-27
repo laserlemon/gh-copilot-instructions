@@ -546,9 +546,7 @@ func (a *App) ListRows() ([]Row, ConfigOrigin, error) {
 func (a *App) printCovered() {
 	cs := a.cs()
 	a.msg("")
-	a.msg("%s instructions installed to %s", cs.SuccessIcon(), cs.Bold(a.Paths.InstallDir))
-	a.dim("Applied automatically in Copilot CLI, VS Code (local/Remote/Codespaces), and the GitHub Copilot desktop app.")
-	a.dim("Reload VS Code / restart the desktop app to pick up changes.")
+	a.msg("%s %s", cs.SuccessIcon(), cs.Gray("Instructions installed to: "+a.Paths.InstallDir))
 }
 
 func pluralFiles(n int) string {
