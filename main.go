@@ -79,7 +79,7 @@ func addCmd() *cobra.Command {
 			}
 			app := newApp()
 			jo.apply(app)
-			return app.Add(s, jo.asJSON)
+			return app.Add(s, jo.enabled)
 		},
 	}
 	c.Flags().StringVar(&repo, "repo", "", "Source repository (`owner/repo`)")
@@ -107,7 +107,7 @@ func pullCmd() *cobra.Command {
 			$ gh copilot-instructions pull github/team-instructions
 
 			# List the repos whose commit changed on this pull
-			$ gh copilot-instructions pull --json --jq '.[] | select(.state=="updated") | .repo'`),
+			$ gh copilot-instructions pull --json | jq -r '.[] | select(.state=="updated") | .repo'`),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := jo.validate(); err != nil {
@@ -119,7 +119,7 @@ func pullCmd() *cobra.Command {
 			}
 			app := newApp()
 			jo.apply(app)
-			return app.Pull(filter, jo.asJSON)
+			return app.Pull(filter, jo.enabled)
 		},
 	}
 	jo.register(c)
@@ -143,19 +143,19 @@ func listCmd() *cobra.Command {
 			# Emit the config to paste into a Codespaces secret
 			$ gh copilot-instructions list --raw
 
-			# Print the repo and sha of each source
-			$ gh copilot-instructions list --json --jq '.[] | "\(.repo) \(.sha)"'`),
+			# Print just the repo and sha of each source
+			$ gh copilot-instructions list --json=repo,sha`),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := jo.validate(); err != nil {
 				return err
 			}
-			if jo.asJSON && raw {
+			if jo.enabled && raw {
 				return fmt.Errorf("cannot use --json and --raw together")
 			}
 			app := newApp()
 			jo.apply(app)
-			return app.RenderList(jo.asJSON, raw)
+			return app.RenderList(jo.enabled, raw)
 		},
 	}
 	c.Flags().BoolVar(&raw, "raw", false, "Output config-file lines to paste into a Codespaces secret")
@@ -189,12 +189,12 @@ func removeCmd() *cobra.Command {
 				if len(args) > 0 {
 					return fmt.Errorf("--all takes no argument")
 				}
-				return app.RemoveAll(jo.asJSON)
+				return app.RemoveAll(jo.enabled)
 			}
 			if len(args) != 1 {
 				return fmt.Errorf("specify an <id | owner/repo> to remove, or --all")
 			}
-			return app.Remove(args[0], jo.asJSON)
+			return app.Remove(args[0], jo.enabled)
 		},
 	}
 	c.Flags().BoolVar(&all, "all", false, "Remove every source, all installed files, and config")
@@ -202,32 +202,53 @@ func removeCmd() *cobra.Command {
 	return c
 }
 
-// jsonOpts holds the gh-style JSON output flags shared by every command that can
-// emit JSON: --json plus the --jq/--template post-processors.
+// jsonOpts holds the gh-style JSON output flag shared by every command that can
+// emit JSON. Mirroring gh (and gh-cru), --json is both a boolean and an
+// optional field selector: bare --json emits the full object, --json=repo,sha
+// selects top-level keys.
 type jsonOpts struct {
-	asJSON   bool
-	jq       string
-	template string
+	enabled bool
+	fields  []string
 }
 
-func (o *jsonOpts) register(c *cobra.Command) {
-	c.Flags().BoolVar(&o.asJSON, "json", false, "Output JSON")
-	c.Flags().StringVarP(&o.jq, "jq", "q", "", "Filter JSON output using a jq `expression`")
-	c.Flags().StringVarP(&o.template, "template", "t", "", `Format JSON output using a Go template; see "gh help formatting"`)
-	c.MarkFlagsMutuallyExclusive("jq", "template")
-}
+// jsonValue is the pflag.Value backing --json. Type() returns "" so the flag
+// renders as --json[=full] (not --json string); paired with NoOptDefVal="full",
+// bare --json means "the full object", --json=<fields> a selection.
+type jsonValue struct{ o *jsonOpts }
 
-func (o *jsonOpts) validate() error {
-	if (o.jq != "" || o.template != "") && !o.asJSON {
-		return fmt.Errorf("cannot use --jq or --template without --json")
+func (jsonValue) String() string { return "" }
+func (jsonValue) Type() string   { return "" }
+func (v jsonValue) Set(raw string) error {
+	v.o.enabled = true
+	v.o.fields = nil
+	if raw == "" || raw == jsonNoOptVal {
+		return nil
+	}
+	for _, f := range strings.Split(raw, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			v.o.fields = append(v.o.fields, f)
+		}
 	}
 	return nil
 }
 
-func (o *jsonOpts) apply(a *gci.App) {
-	a.JQ = o.jq
-	a.Template = o.template
+// jsonNoOptVal is the value pflag assigns to a bare --json (no =value); it maps
+// to "the full object". It also renders in the help line as --json[=full].
+const jsonNoOptVal = "full"
+
+func (o *jsonOpts) register(c *cobra.Command) {
+	c.Flags().Var(jsonValue{o}, "json", "Output JSON; --json=<fields> selects top-level keys")
+	c.Flags().Lookup("json").NoOptDefVal = jsonNoOptVal
 }
+
+func (o *jsonOpts) validate() error {
+	if o.enabled {
+		return gci.ValidateJSONFields(o.fields)
+	}
+	return nil
+}
+
+func (o *jsonOpts) apply(a *gci.App) { a.JSONFields = o.fields }
 
 // heredoc trims a leading newline and reindents each line to gh's two-space
 // example indentation (input lines are written with three leading tabs). Blank

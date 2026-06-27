@@ -227,6 +227,30 @@ type sourceJSON struct {
 	PulledAt string `json:"pulledAt"`
 }
 
+// sourceJSONFields is the canonical order of a source's top-level JSON keys. It
+// is the source of truth for which keys --json=<fields> may select and the
+// order a selected subset is emitted in (so --json=repo,sha and --json=sha,repo
+// are byte-identical). Keep in sync with sourceJSON's field order/tags.
+var sourceJSONFields = []string{"state", "id", "repo", "ref", "sha", "files", "pulledAt"}
+
+// ValidateJSONFields checks a requested --json field selection against the
+// selectable keys, returning a gh-style error that names the first unknown
+// field and lists the full available set. An empty selection (bare --json =>
+// the full object) is always valid.
+func ValidateJSONFields(fields []string) error {
+	known := make(map[string]bool, len(sourceJSONFields))
+	for _, k := range sourceJSONFields {
+		known[k] = true
+	}
+	for _, f := range fields {
+		if !known[f] {
+			return fmt.Errorf("unknown JSON field: %q\navailable fields:\n  %s",
+				f, strings.Join(sourceJSONFields, "\n  "))
+		}
+	}
+	return nil
+}
+
 func (a *App) renderListJSON(rows []Row) error {
 	items := make([]sourceJSON, 0, len(rows))
 	for _, r := range rows {
