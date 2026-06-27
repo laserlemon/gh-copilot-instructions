@@ -233,7 +233,7 @@ func (a *App) renderListJSON(rows []Row) error {
 			pulled = r.PulledAt.Format(time.RFC3339)
 		}
 		items = append(items, listJSONItem{
-			State: r.State, ID: r.ID, Repo: r.Repo, Ref: r.Ref, SHA: r.SHA,
+			State: r.State, ID: r.ID, Repo: r.Repo, Ref: refJSON(r.Ref), SHA: r.SHA,
 			Files: r.Files, PulledAt: pulled,
 		})
 	}
@@ -285,6 +285,17 @@ func stateIcon(state string, cs *ColorScheme) (string, func(string) string) {
 func refDisplay(ref string) string {
 	if isFullSHA(ref) {
 		return short(ref)
+	}
+	return ref
+}
+
+// refJSON renders a source's ref for JSON output: the configured ref, or "-" for
+// the default branch. GitHub blob URLs accept "-" in place of a ref and redirect
+// to the default branch (e.g. github.com/owner/repo/blob/-/path), so "-" still
+// composes into a working URL.
+func refJSON(ref string) string {
+	if ref == "" {
+		return "-"
 	}
 	return ref
 }

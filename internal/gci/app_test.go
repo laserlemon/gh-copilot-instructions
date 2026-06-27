@@ -447,13 +447,19 @@ func TestPullJSON(t *testing.T) {
 		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
 	}
 	got := map[string]string{}
+	refs := map[string]string{}
 	for _, r := range res {
 		got[r["repo"].(string)] = r["state"].(string)
+		refs[r["repo"].(string)] = r["ref"].(string)
 	}
 	if got["o/new"] != "pulled" {
 		t.Errorf("new source state = %q, want pulled", got["o/new"])
 	}
 	if got["o/moved"] != "updated" {
 		t.Errorf("moved source state = %q, want updated", got["o/moved"])
+	}
+	// A default-branch ref is rendered as "-" (a usable GitHub blob URL ref).
+	if refs["o/new"] != "-" {
+		t.Errorf("default-branch ref = %q, want \"-\"", refs["o/new"])
 	}
 }

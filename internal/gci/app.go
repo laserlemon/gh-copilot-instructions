@@ -236,7 +236,7 @@ type pullResultJSON struct {
 // existing source's commit moved; a brand-new source or an unchanged SHA is
 // "pulled"; an error or a broken/empty install is "failed".
 func pullResultFor(s Source, out pullOutcome) pullResultJSON {
-	r := pullResultJSON{ID: s.ID(), Repo: s.Repo, Ref: s.Ref}
+	r := pullResultJSON{ID: s.ID(), Repo: s.Repo, Ref: refJSON(s.Ref)}
 	switch {
 	case out.err != nil || out.row.State == StateFailed:
 		r.State = "failed"
