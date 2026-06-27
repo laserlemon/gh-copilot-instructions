@@ -36,9 +36,11 @@ gh copilot-instructions remove --all                                # remove eve
   part of the spec). A glob `path` must be quoted. Paths are repo-root-relative (a leading `/` is fine).
 - **`pull`** is incremental: it resolves each source's current commit SHA and **skips** any source
   that's already up to date (and self-heals if installed files go missing).
-- **`list`** prints an aligned table on a terminal and tab-separated values when piped. Use `--json`
-  for structured output, or `--raw` to print the sources in config-file format (one per line, with any
-  inline tokens) — ready to paste into the multiline `GH_COPILOT_INSTRUCTIONS` Codespaces secret.
+- **`list`** prints an aligned table on a terminal and tab-separated values when piped. The first
+  column shows each source's state — `✓ PULLED`, `• PENDING`, or `× FAILED` (failed means the last
+  pull matched no files or its installed files are missing). Use `--json` for structured output, or
+  `--raw` to print the sources in config-file format (one per line, with any inline tokens) — ready to
+  paste into the multiline `GH_COPILOT_INSTRUCTIONS` Codespaces secret.
 - **`remove`** / **`remove --all`** only ever delete files this tool installed (they carry a
   `gh-copilot-instructions.` prefix) — your own hand-written instruction files are never touched.
 

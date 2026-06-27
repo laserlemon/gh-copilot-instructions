@@ -34,13 +34,11 @@ func (c *ColorScheme) wrap(code, s string) string {
 	return code + s + ansiReset
 }
 
-func (c *ColorScheme) Bold(s string) string    { return c.wrap(ansiBold, s) }
-func (c *ColorScheme) Red(s string) string     { return c.wrap(ansiRed, s) }
-func (c *ColorScheme) Green(s string) string   { return c.wrap(ansiGreen, s) }
-func (c *ColorScheme) Yellow(s string) string  { return c.wrap(ansiYellow, s) }
-func (c *ColorScheme) Blue(s string) string    { return c.wrap(ansiBlue, s) }
-func (c *ColorScheme) Magenta(s string) string { return c.wrap(ansiMagenta, s) }
-func (c *ColorScheme) Cyan(s string) string    { return c.wrap(ansiCyan, s) }
+func (c *ColorScheme) Bold(s string) string   { return c.wrap(ansiBold, s) }
+func (c *ColorScheme) Red(s string) string    { return c.wrap(ansiRed, s) }
+func (c *ColorScheme) Green(s string) string  { return c.wrap(ansiGreen, s) }
+func (c *ColorScheme) Yellow(s string) string { return c.wrap(ansiYellow, s) }
+func (c *ColorScheme) Cyan(s string) string   { return c.wrap(ansiCyan, s) }
 
 // Gray renders muted/secondary text (the theme's "bright black").
 func (c *ColorScheme) Gray(s string) string { return c.wrap(ansiGray, s) }

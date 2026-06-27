@@ -249,11 +249,20 @@ func (a *App) RemoveAll() error {
 	return nil
 }
 
+// Source states, as shown in the list output (uppercase, matching GitHub's
+// state-string convention).
+const (
+	StatePulled  = "PULLED"  // recorded and every installed file is present
+	StatePending = "PENDING" // configured but not yet pulled
+	StateFailed  = "FAILED"  // pulled but the install is broken or matched no files
+)
+
 // Row is one line of `list` output.
 type Row struct {
+	State    string // StatePulled, StatePending, or StateFailed
 	ID       string
 	Repo     string
-	Ref      string // the branch/tag/SHA shown in the REF column (resolved default branch when not pinned)
+	Ref      string // the branch/tag/SHA shown in the REF column ("" => default branch)
 	SHA      string
 	PulledAt time.Time
 	Files    int
@@ -272,14 +281,22 @@ func (a *App) ListRows() ([]Row, ConfigOrigin, error) {
 	var rows []Row
 	for _, s := range srcs {
 		r := Row{
-			ID:   s.ID(),
-			Repo: s.Repo,
-			Ref:  s.Ref,
+			State: StatePending,
+			ID:    s.ID(),
+			Repo:  s.Repo,
+			Ref:   s.Ref,
 		}
 		if ss, ok := st.Sources[s.ID()]; ok {
 			r.SHA = ss.SHA
 			r.PulledAt = ss.PulledAt
 			r.Files = len(ss.Files)
+			// pulled = state recorded and every installed file is present;
+			// otherwise the install is broken or matched nothing => failed.
+			if a.allFilesExist(ss.Files) {
+				r.State = StatePulled
+			} else {
+				r.State = StateFailed
+			}
 		}
 		rows = append(rows, r)
 	}
@@ -305,9 +322,11 @@ func isOurs(name string) bool {
 	return strings.HasPrefix(name, FilePrefix+".") && strings.HasSuffix(name, ".instructions.md")
 }
 
+// short abbreviates a commit SHA for display. gh's convention is 8 characters
+// (git/client.go ShortSHA), which is what this extension uses to match gh.
 func short(sha string) string {
-	if len(sha) > 7 {
-		return sha[:7]
+	if len(sha) > 8 {
+		return sha[:8]
 	}
 	return sha
 }

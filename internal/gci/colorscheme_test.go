@@ -9,7 +9,7 @@ func TestColorSchemeDisabledIsPlain(t *testing.T) {
 	cs := &ColorScheme{enabled: false}
 	for _, got := range []string{
 		cs.Bold("x"), cs.Red("x"), cs.Green("x"), cs.Yellow("x"),
-		cs.Cyan("x"), cs.Magenta("x"), cs.Gray("x"), cs.Header("x"),
+		cs.Cyan("x"), cs.Gray("x"), cs.Header("x"),
 		cs.SuccessIcon(), cs.WarningIcon(), cs.FailureIcon(),
 	} {
 		if strings.Contains(got, "\x1b") {

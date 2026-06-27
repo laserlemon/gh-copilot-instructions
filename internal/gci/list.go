@@ -3,6 +3,7 @@ package gci
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/tableprinter"
@@ -13,12 +14,14 @@ import (
 // RenderList prints the list rows following gh tableprinter conventions:
 // a TTY gets an aligned, headed, colorized table; a pipe gets headerless TSV.
 //
-// Columns (TTY and TSV share this order; JSON matches it too):
+// Columns (TTY/TSV/JSON share this order):
 //
-// # ID  REPO  REF  SHA  FILES  PULLED
+// <state>  ID  REPO  REF  SHA  FILES  PULLED
 //
-// ID is accented (cyan); REPO/REF/SHA/FILES use the terminal's default
-// foreground; PULLED is muted gray (matching the underlined gray headers).
+// The leading state column is an icon on a TTY (✓ pulled / - pending / ✗ failed)
+// and the state word when piped. ID is cyan; REPO/REF/SHA/FILES use the default
+// foreground (REF is muted gray for "(default)"); PULLED is muted gray. FILES is
+// right-aligned. Headers are underlined gray.
 func (a *App) RenderList(asJSON, raw bool) error {
 	if raw {
 		return a.renderRaw()
@@ -45,23 +48,75 @@ func (a *App) RenderList(asJSON, raw bool) error {
 		return nil
 	}
 
+	// Pad headers to full column width so their underline spans the whole
+	// column (including the last column); right-align numeric columns.
+	padRight := tableprinter.WithPadding(text.PadRight)
+	padLeft := tableprinter.WithPadding(func(width int, s string) string {
+		if n := width - text.DisplayWidth(s); n > 0 {
+			return strings.Repeat(" ", n) + s
+		}
+		return s
+	})
+
 	tp := tableprinter.New(a.Out, isTTY, w)
 	if isTTY {
-		for _, h := range []string{"ID", "REPO", "REF", "SHA", "FILES", "PULLED"} {
-			tp.AddField(h, tableprinter.WithColor(cs.Header))
-		}
+		tp.AddField("") // state column: no header label
+		tp.AddField("ID", tableprinter.WithColor(cs.Header), padRight)
+		tp.AddField("REPO", tableprinter.WithColor(cs.Header), padRight)
+		tp.AddField("REF", tableprinter.WithColor(cs.Header), padRight)
+		tp.AddField("SHA", tableprinter.WithColor(cs.Header), padRight)
+		tp.AddField("FILES", tableprinter.WithColor(cs.Header), padLeft)
+		tp.AddField("PULLED", tableprinter.WithColor(cs.Header), padRight)
 		tp.EndRow()
 	}
 	for _, r := range rows {
+		if isTTY {
+			icon, color := stateIcon(r.State, cs)
+			tp.AddField(icon, tableprinter.WithColor(color))
+		} else {
+			tp.AddField(r.State)
+		}
 		tp.AddField(r.ID, tableprinter.WithColor(cs.Cyan))
 		tp.AddField(r.Repo)
-		tp.AddField(refCol(r.Ref))
+		if r.Ref == "" {
+			tp.AddField("(default)", tableprinter.WithColor(cs.Gray))
+		} else {
+			tp.AddField(refDisplay(r.Ref))
+		}
 		tp.AddField(shaCol(r.SHA))
-		tp.AddField(fmt.Sprintf("%d", r.Files))
+		tp.AddField(fmt.Sprintf("%d", r.Files), padLeft)
 		tp.AddField(pulledCol(r.PulledAt, isTTY), tableprinter.WithColor(cs.Gray))
 		tp.EndRow()
 	}
 	return tp.Render()
+}
+
+// listJSONItem field order matches the TTY/TSV column order.
+type listJSONItem struct {
+	State    string `json:"state"`
+	ID       string `json:"id"`
+	Repo     string `json:"repo"`
+	Ref      string `json:"ref"`
+	SHA      string `json:"sha"`
+	Files    int    `json:"files"`
+	PulledAt string `json:"pulledAt"`
+}
+
+func (a *App) renderListJSON(rows []Row) error {
+	items := make([]listJSONItem, 0, len(rows))
+	for _, r := range rows {
+		pulled := ""
+		if !r.PulledAt.IsZero() {
+			pulled = r.PulledAt.Format(time.RFC3339)
+		}
+		items = append(items, listJSONItem{
+			State: r.State, ID: r.ID, Repo: r.Repo, Ref: r.Ref, SHA: r.SHA,
+			Files: r.Files, PulledAt: pulled,
+		})
+	}
+	enc := json.NewEncoder(a.Out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(items)
 }
 
 // renderRaw prints the configured sources in config-file format — one canonical
@@ -81,38 +136,23 @@ func (a *App) renderRaw() error {
 	return nil
 }
 
-// listJSONItem field order matches the TTY/TSV column order.
-type listJSONItem struct {
-	ID       string `json:"id"`
-	Repo     string `json:"repo"`
-	Ref      string `json:"ref"`
-	SHA      string `json:"sha"`
-	Files    int    `json:"files"`
-	PulledAt string `json:"pulledAt"`
-}
-
-func (a *App) renderListJSON(rows []Row) error {
-	items := make([]listJSONItem, 0, len(rows))
-	for _, r := range rows {
-		pulled := ""
-		if !r.PulledAt.IsZero() {
-			pulled = r.PulledAt.Format(time.RFC3339)
-		}
-		items = append(items, listJSONItem{
-			ID: r.ID, Repo: r.Repo, Ref: r.Ref, SHA: r.SHA,
-			Files: r.Files, PulledAt: pulled,
-		})
+// stateIcon maps a source state to a gh-checks-style icon and its color:
+// ✓ (green) pulled, • (yellow) pending, × (red) failed.
+func stateIcon(state string, cs *ColorScheme) (string, func(string) string) {
+	switch state {
+	case StatePulled:
+		return "✓", cs.Green
+	case StateFailed:
+		return "×", cs.Red
+	default: // StatePending
+		return "•", cs.Yellow
 	}
-	enc := json.NewEncoder(a.Out)
-	enc.SetIndent("", "  ")
-	return enc.Encode(items)
 }
 
-// refCol shows "(default)" when no ref is pinned. A pull with no ref always
-// follows the repo's current default branch, even if that branch changes.
-func refCol(ref string) string {
-	if ref == "" {
-		return "(default)"
+// refDisplay shows a branch/tag in full, but abbreviates a pinned commit SHA.
+func refDisplay(ref string) string {
+	if isFullSHA(ref) {
+		return short(ref)
 	}
 	return ref
 }

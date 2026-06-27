@@ -253,3 +253,54 @@ func TestRenderRawRoundTripsThroughEnv(t *testing.T) {
 		t.Fatalf("round-trip mismatch: %+v", srcs[0])
 	}
 }
+
+func TestListRowState(t *testing.T) {
+	src, _ := ParseSpec("o/r")
+	id := src.ID()
+	f := &fakeFetcher{
+		sha:   map[string]string{id: "abc1234def5678"},
+		files: map[string][]FetchedFile{id: {{Rel: "a.instructions.md", Content: []byte("a")}}},
+	}
+	a := newTestApp(t, f)
+
+	// Configured but never pulled => PENDING.
+	if err := a.Paths.AddSource(src); err != nil {
+		t.Fatal(err)
+	}
+	rows, _, err := a.ListRows()
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%v err=%v", rows, err)
+	}
+	if rows[0].State != StatePending {
+		t.Errorf("never-pulled state = %q, want %q", rows[0].State, StatePending)
+	}
+
+	// After a successful pull => PULLED.
+	if err := a.Pull(""); err != nil {
+		t.Fatal(err)
+	}
+	rows, _, _ = a.ListRows()
+	if rows[0].State != StatePulled {
+		t.Errorf("pulled state = %q, want %q", rows[0].State, StatePulled)
+	}
+
+	// Installed file removed out from under us => FAILED.
+	for _, ss := range mustState(t, a).Sources {
+		for _, fn := range ss.Files {
+			os.Remove(filepath.Join(a.Paths.InstallDir, fn))
+		}
+	}
+	rows, _, _ = a.ListRows()
+	if rows[0].State != StateFailed {
+		t.Errorf("broken-install state = %q, want %q", rows[0].State, StateFailed)
+	}
+}
+
+func mustState(t *testing.T, a *App) *State {
+	t.Helper()
+	st, err := a.Paths.LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
