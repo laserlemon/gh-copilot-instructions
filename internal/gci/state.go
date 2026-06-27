@@ -3,6 +3,7 @@ package gci
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -23,6 +24,7 @@ type State struct {
 
 // LoadState reads state.json (returns an empty State if absent).
 func (p Paths) LoadState() (*State, error) {
+	p.migrateLegacyState()
 	st := &State{Sources: map[string]SourceState{}}
 	data, err := os.ReadFile(p.StateFile)
 	if err != nil {
@@ -43,9 +45,39 @@ func (p Paths) LoadState() (*State, error) {
 	return st, nil
 }
 
+// migrateLegacyState relocates a pre-state-dir state.json (which lived next to
+// the sources file in ConfigDir) into the XDG state dir, once. Best-effort: any
+// failure leaves the legacy file untouched so a later run can retry, and the
+// worst case is simply a re-pull that regenerates state.
+func (p Paths) migrateLegacyState() {
+	legacy := filepath.Join(p.ConfigDir, "state.json")
+	if legacy == p.StateFile {
+		return
+	}
+	if _, err := os.Stat(p.StateFile); err == nil {
+		return // already migrated (or fresh install wrote here directly)
+	}
+	data, err := os.ReadFile(legacy)
+	if err != nil {
+		return // nothing to migrate
+	}
+	if err := os.MkdirAll(p.StateDir, 0o755); err != nil {
+		return
+	}
+	tmp := p.StateFile + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return
+	}
+	if err := os.Rename(tmp, p.StateFile); err != nil {
+		os.Remove(tmp)
+		return
+	}
+	os.Remove(legacy) // best-effort cleanup of the old location
+}
+
 // Save writes state.json atomically.
 func (p Paths) Save(st *State) error {
-	if err := os.MkdirAll(p.ConfigDir, 0o755); err != nil {
+	if err := os.MkdirAll(p.StateDir, 0o755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(st, "", "  ")
