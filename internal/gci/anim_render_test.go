@@ -87,6 +87,28 @@ func TestDimRow(t *testing.T) {
 	}
 }
 
+// TestPendingRow verifies a queued (pending) row shows the yellow "•" icon while
+// keeping its other cells in full color.
+func TestPendingRow(t *testing.T) {
+	a := &App{}
+	cs := &ColorScheme{enabled: true}
+	v := rowView{Row: Row{State: StatePulled, ID: "abc12345", Repo: "o/r",
+		SHA: "6de16bae1db0345805fe3399b45c1fdfdeb02544", Files: 2, PulledAt: time.Now()}, pending: true}
+	last := renderOne(a, cs, v)
+
+	// Yellow "•" pending icon, even though the underlying state is PULLED.
+	if !strings.Contains(last, ansiYellow+"•") {
+		t.Errorf("pending row should show a yellow • icon: %q", last)
+	}
+	if strings.Contains(last, ansiGreen+"✓") {
+		t.Errorf("pending row should not show the PULLED ✓ icon: %q", last)
+	}
+	// Other cells keep full color (ID cyan), not dimmed.
+	if !strings.Contains(last, ansiCyan+"abc12345") {
+		t.Errorf("pending row ID should stay cyan (not dimmed): %q", last)
+	}
+}
+
 // TestAnimatedSHAReservesWidthSingleRow verifies that, when the in-progress row
 // is the only row, the SHA column is the same width before and after the SHA
 // fills in — so populating it doesn't shift the FILES/PULLED columns.

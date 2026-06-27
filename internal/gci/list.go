@@ -58,12 +58,15 @@ func (a *App) RenderList(asJSON, raw bool) error {
 //     non-target rows during `add`).
 //   - loading: animate this row — a cyan spinner in the state cell and an
 //     elapsed timer in PULLED; SHA and FILES are read live from the Row.
+//   - pending: this row is queued for pull (sequential pull) — show the yellow
+//     "•" pending icon, keeping its current data.
 //   - shaChanged: render a populated SHA green (it changed this pull) instead of
 //     the default foreground.
 type rowView struct {
 	Row
 	dim        bool
 	loading    bool
+	pending    bool
 	spinner    string
 	elapsed    string
 	shaChanged bool
@@ -122,12 +125,17 @@ func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, c
 			}
 		}
 
-		// State icon (never dimmed): cyan spinner while loading, else the
-		// semantic ✓/•/× in its own color.
+		// State icon (never dimmed): cyan spinner while loading, the yellow "•"
+		// while queued for a sequential pull, else the semantic ✓/•/× in its own
+		// color.
 		if isTTY {
-			if v.loading {
+			switch {
+			case v.loading:
 				tp.AddField(v.spinner, tableprinter.WithColor(cs.Cyan)) // gh's cyan spinner
-			} else {
+			case v.pending:
+				icon, color := stateIcon(StatePending, cs)
+				tp.AddField(icon, tableprinter.WithColor(color))
+			default:
 				icon, color := stateIcon(r.State, cs)
 				tp.AddField(icon, tableprinter.WithColor(color))
 			}
@@ -144,10 +152,10 @@ func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, c
 		}
 
 		// SHA: gray "-" until known, green if it changed this pull, else the
-		// default foreground. Loading rows reserve the full SHA width so the
-		// column doesn't shift when the SHA fills in.
+		// default foreground. Target rows (loading or queued) reserve the full
+		// SHA width so the column doesn't shift as the pull progresses.
 		shaText := shaCol(r.SHA)
-		if v.loading {
+		if v.loading || v.pending {
 			shaText = reserveWidth(shaText, shaDisplayWidth)
 		}
 		switch {

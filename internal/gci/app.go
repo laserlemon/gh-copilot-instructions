@@ -244,39 +244,47 @@ type liveRow struct {
 	err      error
 }
 
-// animate concurrently pulls the targeted rows while rendering the live table.
-// Non-target rows render dimmed when dimOthers (the `add` focus effect), else
+// animate pulls the targeted rows ONE AT A TIME (sequentially) while rendering
+// the live table: the current row shows a cyan spinner, rows queued behind it
+// show the yellow "•" pending icon, finished rows settle to their final state,
+// and non-target rows render dimmed when dimOthers (the `add` focus effect) or
 // full-color static. Results are applied to st; returns the first pull error.
 func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, st *State, cs *ColorScheme, width int) error {
 	out := a.Out
 
-	lives := make(map[int]*liveRow, len(targets))
-	prevs := make(map[int]SourceState, len(targets))
-	hasPrev := make(map[int]bool, len(targets))
-	for _, i := range targets {
-		lives[i] = &liveRow{start: time.Now()}
+	// Per-target state, indexed by position in the targets order.
+	lives := make([]*liveRow, len(targets))
+	prevs := make([]SourceState, len(targets))
+	hasPrev := make([]bool, len(targets))
+	pos := make(map[int]int, len(targets)) // row index -> position in targets
+	for p, i := range targets {
+		lives[p] = &liveRow{}
 		ss, ok := st.Sources[srcs[i].ID()]
-		prevs[i] = ss
-		hasPrev[i] = ok
+		prevs[p], hasPrev[p] = ss, ok
+		pos[i] = p
 	}
 
-	doneCh := make(chan struct{}, len(targets))
-	for _, i := range targets {
-		i, lr := i, lives[i]
+	current := 0 // position of the row currently pulling
+	doneCh := make(chan struct{}, 1)
+	launch := func(p int) {
+		i, lr := targets[p], lives[p]
+		lr.mu.Lock()
+		lr.start = time.Now()
+		lr.mu.Unlock()
 		go func() {
 			onProgress := func(sha string, files int) {
 				lr.mu.Lock()
 				if sha != "" {
 					lr.sha = sha
-					lr.changed = sha != prevs[i].SHA
+					lr.changed = sha != prevs[p].SHA
 				}
 				lr.files = files
 				lr.mu.Unlock()
 			}
-			o := a.pullSource(srcs[i], prevs[i], hasPrev[i], onProgress)
+			o := a.pullSource(srcs[i], prevs[p], hasPrev[p], onProgress)
 			final := o.row
 			if o.err != nil {
-				final = a.rowForState(srcs[i], prevs[i], hasPrev[i])
+				final = a.rowForState(srcs[i], prevs[p], hasPrev[p])
 				final.State = StateFailed
 			}
 			lr.mu.Lock()
@@ -295,15 +303,17 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 	build := func() []rowView {
 		views := make([]rowView, len(rows))
 		for idx := range rows {
-			lr, ok := lives[idx]
+			p, ok := pos[idx]
 			if !ok {
 				views[idx] = rowView{Row: rows[idx], dim: dimOthers}
 				continue
 			}
+			lr := lives[p]
 			lr.mu.Lock()
-			if lr.done {
+			switch {
+			case lr.done:
 				views[idx] = rowView{Row: lr.final, shaChanged: lr.changed}
-			} else {
+			case p == current: // actively pulling
 				rv := rows[idx]
 				rv.SHA = lr.sha
 				rv.Files = lr.files
@@ -314,39 +324,49 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 					elapsed:    elapsedSince(lr.start),
 					shaChanged: lr.changed,
 				}
+			default: // queued behind the current row
+				views[idx] = rowView{Row: rows[idx], pending: true}
 			}
 			lr.mu.Unlock()
 		}
 		return views
 	}
 
+	if len(targets) > 0 {
+		launch(0)
+	}
 	shown := a.renderViews(build(), width, cs)
 	fmt.Fprint(out, strings.Join(shown, "\n"), "\n")
 	fmt.Fprint(out, "\x1b[?25l")       // hide cursor
 	defer fmt.Fprint(out, "\x1b[?25h") // restore cursor
 
+	repaint := func() {
+		next := a.renderViews(build(), width, cs)
+		a.paintDiff(out, shown, next)
+		shown = next
+	}
+
 	ticker := time.NewTicker(120 * time.Millisecond) // gh's spinner cadence
 	defer ticker.Stop()
-	remaining := len(targets)
-	for remaining > 0 {
+	for current < len(targets) {
 		select {
 		case <-doneCh:
-			remaining--
+			current++
+			if current < len(targets) {
+				launch(current)
+			}
+			repaint()
 		case <-ticker.C:
 			frame++
-			next := a.renderViews(build(), width, cs)
-			a.paintDiff(out, shown, next)
-			shown = next
+			repaint()
 		}
 	}
-	// Final settled frame.
-	next := a.renderViews(build(), width, cs)
-	a.paintDiff(out, shown, next)
+	repaint() // final settled frame
 
-	// Apply results (single-threaded now that all goroutines have finished).
+	// Apply results (all goroutines have finished).
 	var firstErr error
-	for _, i := range targets {
-		lr := lives[i]
+	for p, i := range targets {
+		lr := lives[p]
 		if lr.err != nil {
 			if firstErr == nil {
 				firstErr = lr.err
