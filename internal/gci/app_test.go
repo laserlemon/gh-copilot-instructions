@@ -22,9 +22,17 @@ func (f *fakeFetcher) ResolveSHA(s Source) (string, error) {
 	return f.sha[s.ID()], nil
 }
 
-func (f *fakeFetcher) Fetch(s Source) (string, []FetchedFile, error) {
+func (f *fakeFetcher) Fetch(s Source, onProgress func(sha string, files int)) (string, []FetchedFile, error) {
 	f.fetches++
-	return f.sha[s.ID()], f.files[s.ID()], nil
+	sha := f.sha[s.ID()]
+	files := f.files[s.ID()]
+	if onProgress != nil {
+		onProgress(sha, 0)
+		for i := range files {
+			onProgress(sha, i+1)
+		}
+	}
+	return sha, files, nil
 }
 
 func newTestApp(t *testing.T, f fetcher) *App {

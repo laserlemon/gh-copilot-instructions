@@ -3,6 +3,7 @@ package gci
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -47,7 +48,25 @@ func (a *App) RenderList(asJSON, raw bool) error {
 		a.dim("Add one with: gh copilot-instructions add <owner/repo[:path]>")
 		return nil
 	}
+	return a.renderTable(a.Out, rows, isTTY, w, cs, nil)
+}
 
+// rowAnim describes the in-progress row during `add`: its index plus the strings
+// to show in the state cell (a spinner frame) and the PULLED cell (an animated
+// ellipsis). The SHA and FILES cells are read from the Row itself, so they fill
+// in live as the pull reports them.
+type rowAnim struct {
+	idx        int
+	stateCell  string
+	pulledCell string
+}
+
+// renderTable writes the list table to w. When anim is non-nil, the row at
+// anim.idx shows anim.stateCell (a spinner) in its state column and
+// anim.pulledCell (an ellipsis) in its PULLED column instead of the usual icon
+// and relative time; this is how `add` animates the in-progress row. anim == nil
+// renders every row normally.
+func (a *App) renderTable(w io.Writer, rows []Row, isTTY bool, width int, cs *ColorScheme, anim *rowAnim) error {
 	// Pad headers to full column width so their underline spans the whole
 	// column (including the last column); right-align numeric columns.
 	padRight := tableprinter.WithPadding(text.PadRight)
@@ -58,7 +77,7 @@ func (a *App) RenderList(asJSON, raw bool) error {
 		return s
 	})
 
-	tp := tableprinter.New(a.Out, isTTY, w)
+	tp := tableprinter.New(w, isTTY, width)
 	if isTTY {
 		// Empty state-column header: the tableprinter pads it to the column
 		// width (one space) and the color underlines it, giving a single-space
@@ -72,10 +91,15 @@ func (a *App) RenderList(asJSON, raw bool) error {
 		tp.AddField("PULLED", tableprinter.WithColor(cs.Header), padRight)
 		tp.EndRow()
 	}
-	for _, r := range rows {
+	for i, r := range rows {
+		animated := anim != nil && i == anim.idx
 		if isTTY {
-			icon, color := stateIcon(r.State, cs)
-			tp.AddField(icon, tableprinter.WithColor(color))
+			if animated {
+				tp.AddField(anim.stateCell, tableprinter.WithColor(cs.Cyan)) // gh's cyan spinner
+			} else {
+				icon, color := stateIcon(r.State, cs)
+				tp.AddField(icon, tableprinter.WithColor(color))
+			}
 		} else {
 			tp.AddField(r.State)
 		}
@@ -86,9 +110,24 @@ func (a *App) RenderList(asJSON, raw bool) error {
 		} else {
 			tp.AddField(refDisplay(r.Ref))
 		}
-		tp.AddField(shaCol(r.SHA))
+		// SHA: a gray "-" placeholder until it's known, then the SHA itself in
+		// the default foreground once populated. During the `add` animation the
+		// cell also reserves the full SHA width so it doesn't shift when it fills.
+		shaText := shaCol(r.SHA)
+		if animated {
+			shaText = reserveWidth(shaText, shaDisplayWidth)
+		}
+		if r.SHA == "" {
+			tp.AddField(shaText, tableprinter.WithColor(cs.Gray))
+		} else {
+			tp.AddField(shaText)
+		}
 		tp.AddField(fmt.Sprintf("%d", r.Files), padLeft)
-		tp.AddField(pulledCol(r.PulledAt, isTTY), tableprinter.WithColor(cs.Gray))
+		if animated {
+			tp.AddField(anim.pulledCell, tableprinter.WithColor(cs.Gray))
+		} else {
+			tp.AddField(pulledCol(r.PulledAt, isTTY), tableprinter.WithColor(cs.Gray))
+		}
 		tp.EndRow()
 	}
 	return tp.Render()
@@ -160,11 +199,24 @@ func refDisplay(ref string) string {
 	return ref
 }
 
+// shaDisplayWidth is the display width of an abbreviated SHA (see short()).
+const shaDisplayWidth = 8
+
 func shaCol(sha string) string {
 	if sha == "" {
 		return "-"
 	}
 	return short(sha)
+}
+
+// reserveWidth right-pads s with spaces to at least w display columns (left
+// alignment, matching the SHA column), so a cell can hold its eventual width
+// before its content arrives.
+func reserveWidth(s string, w int) string {
+	if n := w - text.DisplayWidth(s); n > 0 {
+		return s + strings.Repeat(" ", n)
+	}
+	return s
 }
 
 func pulledCol(t time.Time, isTTY bool) string {

@@ -1,6 +1,7 @@
 package gci
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -8,13 +9,21 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/cli/go-gh/v2/pkg/term"
 )
 
 // fetcher abstracts content fetching so tests can inject a fake.
+//
+// Fetch reports incremental progress: onProgress, when non-nil, is called first
+// with the resolved commit SHA (files=0) as soon as it's known, then again after
+// each matched blob with the running file count. This lets callers fill in the
+// SHA cell early and animate a live "files" counter during the (slow) fetch.
 type fetcher interface {
 	ResolveSHA(Source) (string, error)
-	Fetch(Source) (sha string, files []FetchedFile, err error)
+	Fetch(s Source, onProgress func(sha string, files int)) (sha string, files []FetchedFile, err error)
 }
 
 // App holds the wiring for a command invocation.
@@ -63,16 +72,174 @@ func (a *App) dim(format string, args ...any) {
 	a.msg("%s", a.cs().Gray(fmt.Sprintf(format, args...)))
 }
 
-// Add upserts a source into the local config file and then pulls.
+// Add upserts a source into the local config file, then pulls just that source.
+// On a terminal it shows the full instructions table with the new (last) row
+// animating in place — gh's spinner in the state cell — and settles that row to
+// its final state when the pull completes. Off a terminal it prints plain
+// progress lines.
 func (a *App) Add(s Source) error {
 	if err := a.Paths.AddSource(s); err != nil {
 		return err
 	}
-	a.success("Added %s %s", a.cs().Bold(s.Spec()), a.cs().Gray("("+s.ID()+")"))
 	if EnvSet() {
 		a.warn("%s is set and overrides the config file; this entry applies once that variable is unset.", EnvSources)
 	}
-	return a.Pull("")
+	st, err := a.Paths.LoadState()
+	if err != nil {
+		return err
+	}
+
+	t := term.FromEnv()
+	if !t.IsTerminalOutput() {
+		_, perr := a.pullOne(s, st, false, nil)
+		if e := a.Paths.Save(st); e != nil {
+			return e
+		}
+		if perr != nil {
+			a.fail("%s: %v", s.Repo, perr)
+			return perr
+		}
+		a.printCovered()
+		return nil
+	}
+
+	rows, _, lerr := a.ListRows()
+	if lerr != nil {
+		return lerr
+	}
+	w, _, _ := t.Size()
+	if w <= 0 {
+		w = 80
+	}
+	cs := &ColorScheme{enabled: t.IsColorEnabled()}
+
+	_, perr := a.addAnimated(s, st, rows, rowIndex(rows, s.ID()), cs, w)
+	if e := a.Paths.Save(st); e != nil {
+		return e
+	}
+	if perr != nil {
+		a.fail("%s: %v", s.Repo, perr)
+		return perr
+	}
+	a.printCovered()
+	return nil
+}
+
+// spinnerFrames is gh's exact progress spinner: briandowns CharSets[11], the set
+// gh's iostreams uses (see StartProgressIndicatorWithLabel). Advanced at gh's
+// 120ms cadence and rendered in cyan, matching gh's spinner.WithColor("fgCyan").
+var spinnerFrames = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
+
+// addAnimated renders the table once (rows[idx] is the in-progress new row),
+// pulls that source in the background, and animates that row in place: a spinner
+// in the state cell, a FILES counter that climbs as blobs download, the SHA
+// filled in the moment it's resolved (before the blobs), and an elapsed-seconds
+// timer ("0s", "1s", …) in PULLED that flips to the relative time when done.
+// Each frame re-renders the table to a line buffer and repaints only what
+// changed: normally just the new row's line, and the whole table only when a
+// column actually reflows (e.g. the SHA first appears on a first-ever add).
+// Returns the final row and the pull error (if any).
+func (a *App) addAnimated(s Source, st *State, rows []Row, idx int, cs *ColorScheme, width int) (Row, error) {
+	out := a.Out
+
+	// Live values reported by the pull goroutine, read by the ticker.
+	var sha atomic.Value // string
+	sha.Store("")
+	var filesCount atomic.Int64
+	onProgress := func(s string, files int) {
+		if s != "" {
+			sha.Store(s)
+		}
+		filesCount.Store(int64(files))
+	}
+
+	start := time.Now()
+	elapsed := func() string { return fmt.Sprintf("%ds", int(time.Since(start).Seconds())) }
+
+	shown := a.tableLines(rows, width, cs, &rowAnim{idx, spinnerFrames[0], elapsed()})
+	fmt.Fprint(out, strings.Join(shown, "\n"), "\n")
+	fmt.Fprint(out, "\x1b[?25l")       // hide cursor
+	defer fmt.Fprint(out, "\x1b[?25h") // restore cursor
+
+	// paint diffs next against what's on screen: if only the new row's (last)
+	// line changed, rewrite that one line; if a column reflowed, redraw the
+	// whole table once. Either way the cursor ends back at home (below the table).
+	paint := func(next []string) {
+		if linesEqualExceptLast(shown, next) {
+			fmt.Fprintf(out, "\x1b[1A\r\x1b[K%s\r\x1b[1B", next[len(next)-1])
+		} else {
+			fmt.Fprintf(out, "\x1b[%dA\x1b[J%s\n", len(shown), strings.Join(next, "\n"))
+		}
+		shown = next
+	}
+
+	type result struct {
+		row Row
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		r, e := a.pullOne(s, st, true, onProgress)
+		done <- result{r, e}
+	}()
+
+	ticker := time.NewTicker(120 * time.Millisecond) // gh's spinner cadence
+	defer ticker.Stop()
+	tick := 0
+	for {
+		select {
+		case res := <-done:
+			final := res.row
+			if res.err != nil {
+				final = a.rowFor(s, st)
+				final.State = StateFailed
+			}
+			rows[idx] = final
+			paint(a.tableLines(rows, width, cs, nil))
+			return final, res.err
+		case <-ticker.C:
+			tick++
+			rows[idx].SHA = sha.Load().(string)
+			rows[idx].Files = int(filesCount.Load())
+			anim := &rowAnim{
+				idx:        idx,
+				stateCell:  spinnerFrames[tick%len(spinnerFrames)],
+				pulledCell: elapsed(),
+			}
+			paint(a.tableLines(rows, width, cs, anim))
+		}
+	}
+}
+
+// tableLines renders the table to a slice of lines (one per terminal row).
+func (a *App) tableLines(rows []Row, width int, cs *ColorScheme, anim *rowAnim) []string {
+	var buf bytes.Buffer
+	_ = a.renderTable(&buf, rows, true, width, cs, anim)
+	return strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+}
+
+// linesEqualExceptLast reports whether a and b match on every line but the last
+// (i.e. only the final row's content differs — no column reflow).
+func linesEqualExceptLast(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a)-1; i++ {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// rowIndex returns the index of the row with the given id, or the last row.
+func rowIndex(rows []Row, id string) int {
+	for i, r := range rows {
+		if r.ID == id {
+			return i
+		}
+	}
+	return len(rows) - 1
 }
 
 // Pull pulls all configured sources, or just one when filter (id or owner/repo)
@@ -97,7 +264,7 @@ func (a *App) Pull(filter string) error {
 			continue
 		}
 		matched = true
-		if err := a.pullOne(s, st); err != nil {
+		if _, err := a.pullOne(s, st, false, nil); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -114,7 +281,12 @@ func (a *App) Pull(filter string) error {
 	return firstErr
 }
 
-func (a *App) pullOne(s Source, st *State) error {
+// pullOne pulls a single source into install state, updating st. When quiet is
+// true it prints nothing (the animated `add` owns the output); otherwise it
+// prints gh-style progress lines. onProgress, when non-nil, is called with the
+// resolved SHA and running file count as blobs download, so `add` can fill in
+// the SHA early and animate a live counter. It returns the resulting Row.
+func (a *App) pullOne(s Source, st *State, quiet bool, onProgress func(sha string, files int)) (Row, error) {
 	id := s.ID()
 	prev, hasPrev := st.Sources[id]
 	healthy := hasPrev && a.allFilesExist(prev.Files)
@@ -124,25 +296,29 @@ func (a *App) pullOne(s Source, st *State) error {
 		// commit-ish (≥7 hex digits) that is a left-pinned prefix of the SHA we
 		// already pulled — it can only point at that same commit.
 		if refPinsTo(s.Ref, prev.SHA) {
-			a.dim("  %s  up to date (%s)", s.Repo, short(prev.SHA))
-			return nil
+			if !quiet {
+				a.dim("  %s  up to date (%s)", s.Repo, short(prev.SHA))
+			}
+			return a.rowFor(s, st), nil
 		}
 		// Otherwise resolve the current tip (one API call) and compare.
 		sha, err := a.F.ResolveSHA(s)
 		if err != nil {
-			return err
+			return Row{}, err
 		}
 		if prev.SHA == sha {
-			a.dim("  %s  up to date (%s)", s.Repo, short(sha))
-			return nil
+			if !quiet {
+				a.dim("  %s  up to date (%s)", s.Repo, short(sha))
+			}
+			return a.rowFor(s, st), nil
 		}
 	}
 
-	sha, files, err := a.F.Fetch(s)
+	sha, files, err := a.F.Fetch(s, onProgress)
 	if err != nil {
-		return err
+		return Row{}, err
 	}
-	if len(files) == 0 {
+	if len(files) == 0 && !quiet {
 		a.warn("%s  no files matched %s", a.cs().Bold(s.Repo), a.cs().Gray(s.effectivePath()))
 	}
 	// Order files so that, when two normalize to the same install name, the
@@ -162,18 +338,22 @@ func (a *App) pullOne(s Source, st *State) error {
 	for _, f := range files {
 		rel := s.DestPath(f.Rel)
 		if rel == "" {
-			a.warn("%s  skipped unsafe path %s", a.cs().Bold(s.Repo), a.cs().Gray(f.Rel))
+			if !quiet {
+				a.warn("%s  skipped unsafe path %s", a.cs().Bold(s.Repo), a.cs().Gray(f.Rel))
+			}
 			continue
 		}
 		if first, dup := seen[rel]; dup {
-			a.warn("%s  %s and %s both map to %s; keeping %s",
-				a.cs().Bold(s.Repo), a.cs().Gray(first), a.cs().Gray(f.Rel),
-				a.cs().Gray(path.Base(rel)), a.cs().Gray(first))
+			if !quiet {
+				a.warn("%s  %s and %s both map to %s; keeping %s",
+					a.cs().Bold(s.Repo), a.cs().Gray(first), a.cs().Gray(f.Rel),
+					a.cs().Gray(path.Base(rel)), a.cs().Gray(first))
+			}
 			continue
 		}
 		seen[rel] = f.Rel
 		if err := a.writeInstall(rel, f.Content); err != nil {
-			return err
+			return Row{}, err
 		}
 		installed = append(installed, rel)
 	}
@@ -190,8 +370,10 @@ func (a *App) pullOne(s Source, st *State) error {
 		PulledAt: time.Now().UTC(),
 		Files:    installed,
 	}
-	a.success("%s  %s (%s)", a.cs().Bold(s.Repo), pluralFiles(len(installed)), a.cs().Gray(short(sha)))
-	return nil
+	if !quiet {
+		a.success("%s  %s (%s)", a.cs().Bold(s.Repo), pluralFiles(len(installed)), a.cs().Gray(short(sha)))
+	}
+	return a.rowFor(s, st), nil
 }
 
 // writeInstall writes one file at a forward-slash dest path relative to the
@@ -326,6 +508,24 @@ type Row struct {
 	Files    int
 }
 
+// rowFor builds a Row for a source from the current on-disk state, computing the
+// state the same way `list` does: PENDING (no record), PULLED (record + all files
+// present), or FAILED (record but a file is missing or none matched).
+func (a *App) rowFor(s Source, st *State) Row {
+	r := Row{State: StatePending, ID: s.ID(), Repo: s.Repo, Ref: s.Ref}
+	if ss, ok := st.Sources[s.ID()]; ok {
+		r.SHA = ss.SHA
+		r.PulledAt = ss.PulledAt
+		r.Files = len(ss.Files)
+		if a.allFilesExist(ss.Files) {
+			r.State = StatePulled
+		} else {
+			r.State = StateFailed
+		}
+	}
+	return r
+}
+
 // ListRows returns the configured sources joined with their pulled state.
 func (a *App) ListRows() ([]Row, ConfigOrigin, error) {
 	srcs, origin, err := a.Paths.LoadSources()
@@ -338,25 +538,7 @@ func (a *App) ListRows() ([]Row, ConfigOrigin, error) {
 	}
 	var rows []Row
 	for _, s := range srcs {
-		r := Row{
-			State: StatePending,
-			ID:    s.ID(),
-			Repo:  s.Repo,
-			Ref:   s.Ref,
-		}
-		if ss, ok := st.Sources[s.ID()]; ok {
-			r.SHA = ss.SHA
-			r.PulledAt = ss.PulledAt
-			r.Files = len(ss.Files)
-			// pulled = state recorded and every installed file is present;
-			// otherwise the install is broken or matched nothing => failed.
-			if a.allFilesExist(ss.Files) {
-				r.State = StatePulled
-			} else {
-				r.State = StateFailed
-			}
-		}
-		rows = append(rows, r)
+		rows = append(rows, a.rowFor(s, st))
 	}
 	return rows, origin, nil
 }

@@ -110,8 +110,11 @@ func (Fetcher) ResolveSHA(s Source) (string, error) {
 }
 
 // Fetch resolves the source, lists its tree, and downloads the glob-matched
-// blobs. Returns the commit SHA and the matched files (content verbatim).
-func (Fetcher) Fetch(s Source) (string, []FetchedFile, error) {
+// blobs. Returns the commit SHA and the matched files (content verbatim). When
+// onProgress is non-nil it is called first with the resolved SHA (files=0), then
+// with the running count after each blob, so callers can fill in the SHA early
+// and animate a live progress counter during the download.
+func (Fetcher) Fetch(s Source, onProgress func(sha string, files int)) (string, []FetchedFile, error) {
 	client, err := newClient(resolveToken(s))
 	if err != nil {
 		return "", nil, err
@@ -119,6 +122,9 @@ func (Fetcher) Fetch(s Source) (string, []FetchedFile, error) {
 	ci, err := resolveCommit(client, s)
 	if err != nil {
 		return "", nil, err
+	}
+	if onProgress != nil {
+		onProgress(ci.SHA, 0) // SHA is known now, before any blob downloads
 	}
 	var tree treeResponse
 	if err := client.Get(fmt.Sprintf("repos/%s/git/trees/%s?recursive=1", s.Repo, ci.Commit.Tree.SHA), &tree); err != nil {
@@ -141,6 +147,9 @@ func (Fetcher) Fetch(s Source) (string, []FetchedFile, error) {
 			return "", nil, fmt.Errorf("%s: %s: %w", s.Repo, e.Path, err)
 		}
 		files = append(files, FetchedFile{Rel: e.Path, Content: content})
+		if onProgress != nil {
+			onProgress(ci.SHA, len(files))
+		}
 	}
 	return ci.SHA, files, nil
 }
