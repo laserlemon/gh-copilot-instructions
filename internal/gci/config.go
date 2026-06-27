@@ -106,21 +106,28 @@ func (p Paths) writeFileSources(srcs []Source) error {
 	return os.Rename(tmp, p.SourcesFile)
 }
 
-// AddSource upserts a source into the local file (replacing any existing entry
-// with the same id) and returns the stored source.
+// AddSource upserts a source into the local file. An existing entry with the
+// same id is replaced in place (preserving its position, so re-adding behaves
+// like a pull of that row); a new source is appended.
 func (p Paths) AddSource(s Source) error {
 	existing, err := p.readFileSources()
 	if err != nil {
 		return err
 	}
 	id := s.ID()
-	out := existing[:0:0]
-	for _, e := range existing {
-		if e.ID() != id {
-			out = append(out, e)
+	out := make([]Source, len(existing))
+	replaced := false
+	for i, e := range existing {
+		if e.ID() == id {
+			out[i] = s
+			replaced = true
+		} else {
+			out[i] = e
 		}
 	}
-	out = append(out, s)
+	if !replaced {
+		out = append(out, s)
+	}
 	return p.writeFileSources(out)
 }
 

@@ -1,7 +1,6 @@
 package gci
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -9,7 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/term"
@@ -73,10 +72,10 @@ func (a *App) dim(format string, args ...any) {
 }
 
 // Add upserts a source into the local config file, then pulls just that source.
-// On a terminal it shows the full instructions table with the new (last) row
-// animating in place — gh's spinner in the state cell — and settles that row to
-// its final state when the pull completes. Off a terminal it prints plain
-// progress lines.
+// On a terminal it renders the full instructions table with that row animating
+// (spinner + live SHA/FILES + elapsed) while every other row is dimmed, settling
+// the row to its final state when the pull completes. Off a terminal it prints
+// plain progress lines.
 func (a *App) Add(s Source) error {
 	if err := a.Paths.AddSource(s); err != nil {
 		return err
@@ -89,161 +88,47 @@ func (a *App) Add(s Source) error {
 		return err
 	}
 
+	srcs, _, lerr := a.Paths.LoadSources()
+	if lerr != nil {
+		a.msg("%v", lerr)
+	}
+	target := indexOfID(srcs, s.ID())
+
 	t := term.FromEnv()
-	if !t.IsTerminalOutput() {
-		_, perr := a.pullOne(s, st, false, nil)
+	if !t.IsTerminalOutput() || target < 0 {
+		prev, has := st.Sources[s.ID()]
+		out := a.pullSource(s, prev, has, nil)
+		a.printOutcome(s, out)
+		if out.err == nil {
+			st.Sources[s.ID()] = out.newState
+		}
 		if e := a.Paths.Save(st); e != nil {
 			return e
 		}
-		if perr != nil {
-			a.fail("%s: %v", s.Repo, perr)
-			return perr
+		if out.err != nil {
+			return out.err
 		}
 		a.printCovered(s.ID())
 		return nil
 	}
 
-	rows, _, lerr := a.ListRows()
-	if lerr != nil {
-		return lerr
-	}
-	w, _, _ := t.Size()
-	if w <= 0 {
-		w = 80
-	}
-	cs := &ColorScheme{enabled: t.IsColorEnabled()}
-
-	_, perr := a.addAnimated(s, st, rows, rowIndex(rows, s.ID()), cs, w)
+	rows := a.rowsFor(srcs, st)
+	cs, w := a.tableEnv(t)
+	err = a.animate(rows, srcs, []int{target}, true, st, cs, w)
 	if e := a.Paths.Save(st); e != nil {
 		return e
 	}
-	if perr != nil {
-		a.fail("%s: %v", s.Repo, perr)
-		return perr
+	if err != nil {
+		a.fail("%s: %v", s.Repo, err)
+		return err
 	}
 	a.printCovered(s.ID())
 	return nil
 }
 
-// spinnerFrames is gh's exact progress spinner: briandowns CharSets[11], the set
-// gh's iostreams uses (see StartProgressIndicatorWithLabel). Advanced at gh's
-// 120ms cadence and rendered in cyan, matching gh's spinner.WithColor("fgCyan").
-var spinnerFrames = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
-
-// addAnimated renders the table once (rows[idx] is the in-progress new row),
-// pulls that source in the background, and animates that row in place: a spinner
-// in the state cell, a FILES counter that climbs as blobs download, the SHA
-// filled in the moment it's resolved (before the blobs), and an elapsed-seconds
-// timer ("0s", "1s", …) in PULLED that flips to the relative time when done.
-// Each frame re-renders the table to a line buffer and repaints only what
-// changed: normally just the new row's line, and the whole table only when a
-// column actually reflows (e.g. the SHA first appears on a first-ever add).
-// Returns the final row and the pull error (if any).
-func (a *App) addAnimated(s Source, st *State, rows []Row, idx int, cs *ColorScheme, width int) (Row, error) {
-	out := a.Out
-
-	// Live values reported by the pull goroutine, read by the ticker.
-	var sha atomic.Value // string
-	sha.Store("")
-	var filesCount atomic.Int64
-	onProgress := func(s string, files int) {
-		if s != "" {
-			sha.Store(s)
-		}
-		filesCount.Store(int64(files))
-	}
-
-	start := time.Now()
-	elapsed := func() string { return fmt.Sprintf("%ds", int(time.Since(start).Seconds())) }
-
-	shown := a.tableLines(rows, width, cs, &rowAnim{idx, spinnerFrames[0], elapsed()})
-	fmt.Fprint(out, strings.Join(shown, "\n"), "\n")
-	fmt.Fprint(out, "\x1b[?25l")       // hide cursor
-	defer fmt.Fprint(out, "\x1b[?25h") // restore cursor
-
-	// paint diffs next against what's on screen: if only the new row's (last)
-	// line changed, rewrite that one line; if a column reflowed, redraw the
-	// whole table once. Either way the cursor ends back at home (below the table).
-	paint := func(next []string) {
-		if linesEqualExceptLast(shown, next) {
-			fmt.Fprintf(out, "\x1b[1A\r\x1b[K%s\r\x1b[1B", next[len(next)-1])
-		} else {
-			fmt.Fprintf(out, "\x1b[%dA\x1b[J%s\n", len(shown), strings.Join(next, "\n"))
-		}
-		shown = next
-	}
-
-	type result struct {
-		row Row
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		r, e := a.pullOne(s, st, true, onProgress)
-		done <- result{r, e}
-	}()
-
-	ticker := time.NewTicker(120 * time.Millisecond) // gh's spinner cadence
-	defer ticker.Stop()
-	tick := 0
-	for {
-		select {
-		case res := <-done:
-			final := res.row
-			if res.err != nil {
-				final = a.rowFor(s, st)
-				final.State = StateFailed
-			}
-			rows[idx] = final
-			paint(a.tableLines(rows, width, cs, nil))
-			return final, res.err
-		case <-ticker.C:
-			tick++
-			rows[idx].SHA = sha.Load().(string)
-			rows[idx].Files = int(filesCount.Load())
-			anim := &rowAnim{
-				idx:        idx,
-				stateCell:  spinnerFrames[tick%len(spinnerFrames)],
-				pulledCell: elapsed(),
-			}
-			paint(a.tableLines(rows, width, cs, anim))
-		}
-	}
-}
-
-// tableLines renders the table to a slice of lines (one per terminal row).
-func (a *App) tableLines(rows []Row, width int, cs *ColorScheme, anim *rowAnim) []string {
-	var buf bytes.Buffer
-	_ = a.renderTable(&buf, rows, true, width, cs, anim)
-	return strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-}
-
-// linesEqualExceptLast reports whether a and b match on every line but the last
-// (i.e. only the final row's content differs — no column reflow).
-func linesEqualExceptLast(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a)-1; i++ {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// rowIndex returns the index of the row with the given id, or the last row.
-func rowIndex(rows []Row, id string) int {
-	for i, r := range rows {
-		if r.ID == id {
-			return i
-		}
-	}
-	return len(rows) - 1
-}
-
-// Pull pulls all configured sources, or just one when filter (id or owner/repo)
-// is non-empty.
+// Pull pulls all configured sources, or just those matching filter (id or
+// owner/repo). On a terminal every targeted row animates concurrently in the
+// full-color table; off a terminal it prints plain per-source progress lines.
 func (a *App) Pull(filter string) error {
 	srcs, origin, err := a.Paths.LoadSources()
 	if err != nil {
@@ -257,69 +142,300 @@ func (a *App) Pull(filter string) error {
 	if err != nil {
 		return err
 	}
-	matched := false
-	var firstErr error
-	for _, s := range srcs {
-		if filter != "" && s.ID() != filter && s.Repo != filter {
-			continue
-		}
-		matched = true
-		if _, err := a.pullOne(s, st, false, nil); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			a.fail("%s: %v", s.Repo, err)
+
+	var targets []int
+	for i, s := range srcs {
+		if filter == "" || s.ID() == filter || s.Repo == filter {
+			targets = append(targets, i)
 		}
 	}
-	if filter != "" && !matched {
+	if filter != "" && len(targets) == 0 {
 		return fmt.Errorf("no configured source matches %q", filter)
 	}
-	if err := a.Paths.Save(st); err != nil {
+
+	t := term.FromEnv()
+	if !t.IsTerminalOutput() {
+		var firstErr error
+		for _, i := range targets {
+			s := srcs[i]
+			prev, has := st.Sources[s.ID()]
+			out := a.pullSource(s, prev, has, nil)
+			a.printOutcome(s, out)
+			if out.err != nil {
+				if firstErr == nil {
+					firstErr = out.err
+				}
+				continue
+			}
+			st.Sources[s.ID()] = out.newState
+		}
+		if err := a.Paths.Save(st); err != nil {
+			return err
+		}
+		a.printCovered("")
+		return firstErr
+	}
+
+	rows := a.rowsFor(srcs, st)
+	cs, w := a.tableEnv(t)
+	// Pull never dims: targeted rows animate, the rest render full-color static.
+	err = a.animate(rows, srcs, targets, false, st, cs, w)
+	if e := a.Paths.Save(st); e != nil {
+		return e
+	}
+	if err != nil {
 		return err
 	}
 	a.printCovered("")
+	return err
+}
+
+// tableEnv returns the color scheme and width for the animated table.
+func (a *App) tableEnv(t term.Term) (*ColorScheme, int) {
+	w, _, _ := t.Size()
+	if w <= 0 {
+		w = 80
+	}
+	return &ColorScheme{enabled: t.IsColorEnabled()}, w
+}
+
+// rowsFor builds the table rows (one per source) from the current state.
+func (a *App) rowsFor(srcs []Source, st *State) []Row {
+	rows := make([]Row, len(srcs))
+	for i, s := range srcs {
+		rows[i] = a.rowFor(s, st)
+	}
+	return rows
+}
+
+// printOutcome prints the plain (non-animated) per-source result for a pull.
+func (a *App) printOutcome(s Source, out pullOutcome) {
+	for _, w := range out.warnings {
+		a.warn("%s", w)
+	}
+	if out.err != nil {
+		a.fail("%s: %v", s.Repo, out.err)
+		return
+	}
+	if out.skipped {
+		a.dim("  %s  up to date (%s)", s.Repo, short(out.newState.SHA))
+		return
+	}
+	a.success("%s  %s (%s)", a.cs().Bold(s.Repo), pluralFiles(len(out.newState.Files)), a.cs().Gray(short(out.newState.SHA)))
+}
+
+// spinnerFrames is gh's exact progress spinner: briandowns CharSets[11], the set
+// gh's iostreams uses (see StartProgressIndicatorWithLabel). Advanced at gh's
+// 120ms cadence and rendered in cyan, matching gh's spinner.WithColor("fgCyan").
+var spinnerFrames = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
+
+// liveRow holds the in-flight progress of one animating row, written by its pull
+// goroutine and read by the render ticker.
+type liveRow struct {
+	mu       sync.Mutex
+	sha      string
+	changed  bool
+	files    int
+	start    time.Time
+	done     bool
+	final    Row
+	newState SourceState
+	hasState bool
+	err      error
+}
+
+// animate concurrently pulls the targeted rows while rendering the live table.
+// Non-target rows render dimmed when dimOthers (the `add` focus effect), else
+// full-color static. Results are applied to st; returns the first pull error.
+func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, st *State, cs *ColorScheme, width int) error {
+	out := a.Out
+
+	lives := make(map[int]*liveRow, len(targets))
+	prevs := make(map[int]SourceState, len(targets))
+	hasPrev := make(map[int]bool, len(targets))
+	for _, i := range targets {
+		lives[i] = &liveRow{start: time.Now()}
+		ss, ok := st.Sources[srcs[i].ID()]
+		prevs[i] = ss
+		hasPrev[i] = ok
+	}
+
+	doneCh := make(chan struct{}, len(targets))
+	for _, i := range targets {
+		i, lr := i, lives[i]
+		go func() {
+			onProgress := func(sha string, files int) {
+				lr.mu.Lock()
+				if sha != "" {
+					lr.sha = sha
+					lr.changed = sha != prevs[i].SHA
+				}
+				lr.files = files
+				lr.mu.Unlock()
+			}
+			o := a.pullSource(srcs[i], prevs[i], hasPrev[i], onProgress)
+			final := o.row
+			if o.err != nil {
+				final = a.rowForState(srcs[i], prevs[i], hasPrev[i])
+				final.State = StateFailed
+			}
+			lr.mu.Lock()
+			lr.done = true
+			lr.err = o.err
+			lr.final = final
+			lr.newState = o.newState
+			lr.hasState = o.err == nil
+			lr.changed = o.changed
+			lr.mu.Unlock()
+			doneCh <- struct{}{}
+		}()
+	}
+
+	frame := 0
+	build := func() []rowView {
+		views := make([]rowView, len(rows))
+		for idx := range rows {
+			lr, ok := lives[idx]
+			if !ok {
+				views[idx] = rowView{Row: rows[idx], dim: dimOthers}
+				continue
+			}
+			lr.mu.Lock()
+			if lr.done {
+				views[idx] = rowView{Row: lr.final, shaChanged: lr.changed}
+			} else {
+				rv := rows[idx]
+				rv.SHA = lr.sha
+				rv.Files = lr.files
+				views[idx] = rowView{
+					Row:        rv,
+					loading:    true,
+					spinner:    spinnerFrames[frame%len(spinnerFrames)],
+					elapsed:    elapsedSince(lr.start),
+					shaChanged: lr.changed,
+				}
+			}
+			lr.mu.Unlock()
+		}
+		return views
+	}
+
+	shown := a.renderViews(build(), width, cs)
+	fmt.Fprint(out, strings.Join(shown, "\n"), "\n")
+	fmt.Fprint(out, "\x1b[?25l")       // hide cursor
+	defer fmt.Fprint(out, "\x1b[?25h") // restore cursor
+
+	ticker := time.NewTicker(120 * time.Millisecond) // gh's spinner cadence
+	defer ticker.Stop()
+	remaining := len(targets)
+	for remaining > 0 {
+		select {
+		case <-doneCh:
+			remaining--
+		case <-ticker.C:
+			frame++
+			next := a.renderViews(build(), width, cs)
+			a.paintDiff(out, shown, next)
+			shown = next
+		}
+	}
+	// Final settled frame.
+	next := a.renderViews(build(), width, cs)
+	a.paintDiff(out, shown, next)
+
+	// Apply results (single-threaded now that all goroutines have finished).
+	var firstErr error
+	for _, i := range targets {
+		lr := lives[i]
+		if lr.err != nil {
+			if firstErr == nil {
+				firstErr = lr.err
+			}
+			continue
+		}
+		if lr.hasState {
+			st.Sources[srcs[i].ID()] = lr.newState
+		}
+	}
 	return firstErr
 }
 
-// pullOne pulls a single source into install state, updating st. When quiet is
-// true it prints nothing (the animated `add` owns the output); otherwise it
-// prints gh-style progress lines. onProgress, when non-nil, is called with the
-// resolved SHA and running file count as blobs download, so `add` can fill in
-// the SHA early and animate a live counter. It returns the resulting Row.
-func (a *App) pullOne(s Source, st *State, quiet bool, onProgress func(sha string, files int)) (Row, error) {
-	id := s.ID()
-	prev, hasPrev := st.Sources[id]
-	healthy := hasPrev && a.allFilesExist(prev.Files)
+// paintDiff repaints the table in place, rewriting only the lines that changed
+// (the cursor starts and ends at home, one line below the table).
+func (a *App) paintDiff(out io.Writer, shown, next []string) {
+	if len(shown) != len(next) {
+		fmt.Fprintf(out, "\x1b[%dA\x1b[J%s\n", len(shown), strings.Join(next, "\n"))
+		return
+	}
+	n := len(next)
+	fmt.Fprintf(out, "\x1b[%dA", n) // to the first table line
+	for i := 0; i < n; i++ {
+		if next[i] != shown[i] {
+			fmt.Fprintf(out, "\r\x1b[K%s\r", next[i])
+		}
+		if i < n-1 {
+			fmt.Fprint(out, "\x1b[1B")
+		}
+	}
+	fmt.Fprint(out, "\x1b[1B\r") // back down to home
+}
 
+// elapsedSince formats a running duration as whole seconds ("0s", "1s", …).
+func elapsedSince(start time.Time) string {
+	return fmt.Sprintf("%ds", int(time.Since(start).Seconds()))
+}
+
+// indexOfID returns the index of the source with the given id, or -1.
+func indexOfID(srcs []Source, id string) int {
+	for i, s := range srcs {
+		if s.ID() == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// pullOutcome is the result of pulling one source (see pullSource).
+type pullOutcome struct {
+	row      Row         // the resulting row
+	newState SourceState // state to record (== prev when skipped)
+	changed  bool        // the SHA differs from prev (a brand-new source => true)
+	skipped  bool        // already up to date; no fetch happened
+	warnings []string    // non-fatal messages (no match, collisions, unsafe paths)
+	err      error
+}
+
+// pullSource pulls one source given its previously recorded state. It is pure
+// with respect to shared State: it writes files and returns the new SourceState
+// for the caller to apply, and never mutates *State or prints (so it is safe to
+// run concurrently for distinct sources). onProgress, when non-nil, reports the
+// resolved SHA (early, before blobs) and the running file count.
+func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress func(sha string, files int)) pullOutcome {
+	healthy := hasPrev && a.allFilesExist(prev.Files)
 	if healthy {
 		// Skip without any network call when the configured ref is an immutable
 		// commit-ish (≥7 hex digits) that is a left-pinned prefix of the SHA we
 		// already pulled — it can only point at that same commit.
 		if refPinsTo(s.Ref, prev.SHA) {
-			if !quiet {
-				a.dim("  %s  up to date (%s)", s.Repo, short(prev.SHA))
-			}
-			return a.rowFor(s, st), nil
+			return pullOutcome{row: a.rowForState(s, prev, true), newState: prev, skipped: true}
 		}
 		// Otherwise resolve the current tip (one API call) and compare.
 		sha, err := a.F.ResolveSHA(s)
 		if err != nil {
-			return Row{}, err
+			return pullOutcome{err: err}
 		}
 		if prev.SHA == sha {
-			if !quiet {
-				a.dim("  %s  up to date (%s)", s.Repo, short(sha))
-			}
-			return a.rowFor(s, st), nil
+			return pullOutcome{row: a.rowForState(s, prev, true), newState: prev, skipped: true}
 		}
 	}
 
 	sha, files, err := a.F.Fetch(s, onProgress)
 	if err != nil {
-		return Row{}, err
+		return pullOutcome{err: err}
 	}
-	if len(files) == 0 && !quiet {
-		a.warn("%s  no files matched %s", a.cs().Bold(s.Repo), a.cs().Gray(s.effectivePath()))
+	var warnings []string
+	if len(files) == 0 {
+		warnings = append(warnings, fmt.Sprintf("%s  no files matched %s", s.Repo, s.effectivePath()))
 	}
 	// Order files so that, when two normalize to the same install name, the
 	// choice of which to keep is deterministic and explainable: prefer the file
@@ -338,22 +454,16 @@ func (a *App) pullOne(s Source, st *State, quiet bool, onProgress func(sha strin
 	for _, f := range files {
 		rel := s.DestPath(f.Rel)
 		if rel == "" {
-			if !quiet {
-				a.warn("%s  skipped unsafe path %s", a.cs().Bold(s.Repo), a.cs().Gray(f.Rel))
-			}
+			warnings = append(warnings, fmt.Sprintf("%s  skipped unsafe path %s", s.Repo, f.Rel))
 			continue
 		}
 		if first, dup := seen[rel]; dup {
-			if !quiet {
-				a.warn("%s  %s and %s both map to %s; keeping %s",
-					a.cs().Bold(s.Repo), a.cs().Gray(first), a.cs().Gray(f.Rel),
-					a.cs().Gray(path.Base(rel)), a.cs().Gray(first))
-			}
+			warnings = append(warnings, fmt.Sprintf("%s  %s and %s both map to %s; keeping %s", s.Repo, first, f.Rel, path.Base(rel), first))
 			continue
 		}
 		seen[rel] = f.Rel
 		if err := a.writeInstall(rel, f.Content); err != nil {
-			return Row{}, err
+			return pullOutcome{err: err}
 		}
 		installed = append(installed, rel)
 	}
@@ -362,7 +472,7 @@ func (a *App) pullOne(s Source, st *State, quiet bool, onProgress func(sha strin
 		a.prune(prev.Files, installed)
 	}
 	sort.Strings(installed)
-	st.Sources[id] = SourceState{
+	ns := SourceState{
 		Repo:     s.Repo,
 		Ref:      s.Ref,
 		Path:     s.Path,
@@ -370,10 +480,12 @@ func (a *App) pullOne(s Source, st *State, quiet bool, onProgress func(sha strin
 		PulledAt: time.Now().UTC(),
 		Files:    installed,
 	}
-	if !quiet {
-		a.success("%s  %s (%s)", a.cs().Bold(s.Repo), pluralFiles(len(installed)), a.cs().Gray(short(sha)))
+	return pullOutcome{
+		row:      a.rowForState(s, ns, true),
+		newState: ns,
+		changed:  sha != prev.SHA,
+		warnings: warnings,
 	}
-	return a.rowFor(s, st), nil
 }
 
 // writeInstall writes one file at a forward-slash dest path relative to the
@@ -508,12 +620,12 @@ type Row struct {
 	Files    int
 }
 
-// rowFor builds a Row for a source from the current on-disk state, computing the
-// state the same way `list` does: PENDING (no record), PULLED (record + all files
-// present), or FAILED (record but a file is missing or none matched).
-func (a *App) rowFor(s Source, st *State) Row {
+// rowForState builds a Row for a source from a given SourceState (present=false
+// => a PENDING row with no recorded state): PULLED when every installed file is
+// present, FAILED when a file is missing or none matched.
+func (a *App) rowForState(s Source, ss SourceState, present bool) Row {
 	r := Row{State: StatePending, ID: s.ID(), Repo: s.Repo, Ref: s.Ref}
-	if ss, ok := st.Sources[s.ID()]; ok {
+	if present {
 		r.SHA = ss.SHA
 		r.PulledAt = ss.PulledAt
 		r.Files = len(ss.Files)
@@ -524,6 +636,12 @@ func (a *App) rowFor(s Source, st *State) Row {
 		}
 	}
 	return r
+}
+
+// rowFor builds a Row for a source from the current on-disk state.
+func (a *App) rowFor(s Source, st *State) Row {
+	ss, ok := st.Sources[s.ID()]
+	return a.rowForState(s, ss, ok)
 }
 
 // ListRows returns the configured sources joined with their pulled state.

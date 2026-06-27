@@ -1,6 +1,7 @@
 package gci
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -48,25 +49,39 @@ func (a *App) RenderList(asJSON, raw bool) error {
 		a.dim("Add one with: gh copilot-instructions add <owner/repo[:path]>")
 		return nil
 	}
-	return a.renderTable(a.Out, rows, isTTY, w, cs, nil)
+	return a.renderTable(a.Out, staticViews(rows), isTTY, w, cs)
 }
 
-// rowAnim describes the in-progress row during `add`: its index plus the strings
-// to show in the state cell (a spinner frame) and the PULLED cell (an animated
-// ellipsis). The SHA and FILES cells are read from the Row itself, so they fill
-// in live as the pull reports them.
-type rowAnim struct {
-	idx        int
-	stateCell  string
-	pulledCell string
+// rowView is one row's render input. By default a row renders in full color; the
+// flags drive the `add`/`pull` variations:
+//   - dim: render every cell EXCEPT the state icon in muted gray (the
+//     non-target rows during `add`).
+//   - loading: animate this row — a cyan spinner in the state cell and an
+//     elapsed timer in PULLED; SHA and FILES are read live from the Row.
+//   - shaChanged: render a populated SHA green (it changed this pull) instead of
+//     the default foreground.
+type rowView struct {
+	Row
+	dim        bool
+	loading    bool
+	spinner    string
+	elapsed    string
+	shaChanged bool
 }
 
-// renderTable writes the list table to w. When anim is non-nil, the row at
-// anim.idx shows anim.stateCell (a spinner) in its state column and
-// anim.pulledCell (an ellipsis) in its PULLED column instead of the usual icon
-// and relative time; this is how `add` animates the in-progress row. anim == nil
-// renders every row normally.
-func (a *App) renderTable(w io.Writer, rows []Row, isTTY bool, width int, cs *ColorScheme, anim *rowAnim) error {
+// staticViews wraps rows as plain full-color views (the `list` table).
+func staticViews(rows []Row) []rowView {
+	views := make([]rowView, len(rows))
+	for i, r := range rows {
+		views[i] = rowView{Row: r}
+	}
+	return views
+}
+
+// renderTable writes the list table (one rowView per row) to w following gh
+// tableprinter conventions: a TTY gets an aligned, headed, colorized table; a
+// pipe gets headerless TSV.
+func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, cs *ColorScheme) error {
 	// Pad headers to full column width so their underline spans the whole
 	// column (including the last column); right-align numeric columns.
 	padRight := tableprinter.WithPadding(text.PadRight)
@@ -91,11 +106,27 @@ func (a *App) renderTable(w io.Writer, rows []Row, isTTY bool, width int, cs *Co
 		tp.AddField("PULLED", tableprinter.WithColor(cs.Header), padRight)
 		tp.EndRow()
 	}
-	for i, r := range rows {
-		animated := anim != nil && i == anim.idx
+	for _, v := range views {
+		r := v.Row
+
+		// addCell adds a dimmable cell: color is the normal color func (nil =
+		// default foreground); a dim row overrides every cell to gray.
+		addCell := func(s string, color func(string) string) {
+			if v.dim {
+				color = cs.Gray
+			}
+			if color != nil {
+				tp.AddField(s, tableprinter.WithColor(color))
+			} else {
+				tp.AddField(s)
+			}
+		}
+
+		// State icon (never dimmed): cyan spinner while loading, else the
+		// semantic ✓/•/× in its own color.
 		if isTTY {
-			if animated {
-				tp.AddField(anim.stateCell, tableprinter.WithColor(cs.Cyan)) // gh's cyan spinner
+			if v.loading {
+				tp.AddField(v.spinner, tableprinter.WithColor(cs.Cyan)) // gh's cyan spinner
 			} else {
 				icon, color := stateIcon(r.State, cs)
 				tp.AddField(icon, tableprinter.WithColor(color))
@@ -103,34 +134,55 @@ func (a *App) renderTable(w io.Writer, rows []Row, isTTY bool, width int, cs *Co
 		} else {
 			tp.AddField(r.State)
 		}
-		tp.AddField(r.ID, tableprinter.WithColor(cs.Cyan))
-		tp.AddField(r.Repo)
+
+		addCell(r.ID, cs.Cyan)
+		addCell(r.Repo, nil)
 		if r.Ref == "" {
-			tp.AddField("(default)", tableprinter.WithColor(cs.Gray))
+			addCell("(default)", cs.Gray)
 		} else {
-			tp.AddField(refDisplay(r.Ref))
+			addCell(refDisplay(r.Ref), nil)
 		}
-		// SHA: a gray "-" placeholder until it's known, then the SHA itself in
-		// the default foreground once populated. During the `add` animation the
-		// cell also reserves the full SHA width so it doesn't shift when it fills.
+
+		// SHA: gray "-" until known, green if it changed this pull, else the
+		// default foreground. Loading rows reserve the full SHA width so the
+		// column doesn't shift when the SHA fills in.
 		shaText := shaCol(r.SHA)
-		if animated {
+		if v.loading {
 			shaText = reserveWidth(shaText, shaDisplayWidth)
 		}
-		if r.SHA == "" {
-			tp.AddField(shaText, tableprinter.WithColor(cs.Gray))
-		} else {
-			tp.AddField(shaText)
+		switch {
+		case r.SHA == "":
+			addCell(shaText, cs.Gray)
+		case v.shaChanged:
+			addCell(shaText, cs.Green)
+		default:
+			addCell(shaText, nil)
 		}
-		tp.AddField(fmt.Sprintf("%d", r.Files), padLeft)
-		if animated {
-			tp.AddField(anim.pulledCell, tableprinter.WithColor(cs.Gray))
+
+		// FILES: right-aligned; dimmed to gray on non-target rows.
+		filesText := fmt.Sprintf("%d", r.Files)
+		if v.dim {
+			tp.AddField(filesText, tableprinter.WithColor(cs.Gray), padLeft)
 		} else {
-			tp.AddField(pulledCol(r.PulledAt, isTTY), tableprinter.WithColor(cs.Gray))
+			tp.AddField(filesText, padLeft)
+		}
+
+		if v.loading {
+			addCell(v.elapsed, cs.Gray)
+		} else {
+			addCell(pulledCol(r.PulledAt, isTTY), cs.Gray)
 		}
 		tp.EndRow()
 	}
 	return tp.Render()
+}
+
+// renderViews renders views to a slice of lines (one per terminal row), for the
+// animated table.
+func (a *App) renderViews(views []rowView, width int, cs *ColorScheme) []string {
+	var buf bytes.Buffer
+	_ = a.renderTable(&buf, views, true, width, cs)
+	return strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
 }
 
 // listJSONItem field order matches the TTY/TSV column order.
