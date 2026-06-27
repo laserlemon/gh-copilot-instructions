@@ -2,6 +2,7 @@ package gci
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,7 +81,7 @@ func TestPullInstallSkipPrune(t *testing.T) {
 	}
 
 	// First pull installs both files.
-	if err := a.Pull(""); err != nil {
+	if err := a.Pull("", false); err != nil {
 		t.Fatal(err)
 	}
 	got := ls(t, instDir(a))
@@ -92,7 +93,7 @@ func TestPullInstallSkipPrune(t *testing.T) {
 	}
 
 	// Second pull at the same SHA must SKIP (no new fetch).
-	if err := a.Pull(""); err != nil {
+	if err := a.Pull("", false); err != nil {
 		t.Fatal(err)
 	}
 	if f.fetches != 1 {
@@ -102,7 +103,7 @@ func TestPullInstallSkipPrune(t *testing.T) {
 	// New commit drops a file -> re-pull installs new set and prunes the old one.
 	f.sha[id] = "sha2222222222222222222222222222222222222"
 	f.files[id] = []FetchedFile{{Rel: "general.instructions.md", Content: []byte("A2")}}
-	if err := a.Pull(""); err != nil {
+	if err := a.Pull("", false); err != nil {
 		t.Fatal(err)
 	}
 	if f.fetches != 2 {
@@ -115,7 +116,7 @@ func TestPullInstallSkipPrune(t *testing.T) {
 
 	// Deleting an installed file must trigger a re-pull even at the same SHA.
 	os.Remove(filepath.Join(instDir(a), got[0]))
-	if err := a.Pull(""); err != nil {
+	if err := a.Pull("", false); err != nil {
 		t.Fatal(err)
 	}
 	if f.fetches != 3 {
@@ -143,7 +144,7 @@ func TestPullCollisionKeepsFirst(t *testing.T) {
 	if err := a.Paths.AddSource(src); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Pull(""); err != nil {
+	if err := a.Pull("", false); err != nil {
 		t.Fatal(err)
 	}
 	got := ls(t, instDir(a))
@@ -171,7 +172,7 @@ func TestRemoveAllLeavesUserFile(t *testing.T) {
 	if err := a.Paths.AddSource(src); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Pull(""); err != nil {
+	if err := a.Pull("", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -213,7 +214,7 @@ func TestRemoveOneByRepo(t *testing.T) {
 	if err := a.Paths.AddSource(s2); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Pull(""); err != nil {
+	if err := a.Pull("", false); err != nil {
 		t.Fatal(err)
 	}
 	if len(ls(t, instDir(a))) != 2 {
@@ -324,7 +325,7 @@ func TestListRowState(t *testing.T) {
 	}
 
 	// After a successful pull => PULLED.
-	if err := a.Pull(""); err != nil {
+	if err := a.Pull("", false); err != nil {
 		t.Fatal(err)
 	}
 	rows, _, _ = a.ListRows()
@@ -367,7 +368,7 @@ func TestPullSkipsViaShaPrefixWithoutNetwork(t *testing.T) {
 	}
 
 	// First pull fetches once and records the full SHA.
-	if err := a.Pull(""); err != nil {
+	if err := a.Pull("", false); err != nil {
 		t.Fatal(err)
 	}
 	if f.fetches != 1 {
@@ -377,7 +378,7 @@ func TestPullSkipsViaShaPrefixWithoutNetwork(t *testing.T) {
 
 	// Second pull must skip with NO network at all: the pinned ref is a prefix
 	// of the recorded SHA, so neither ResolveSHA nor Fetch should be called.
-	if err := a.Pull(""); err != nil {
+	if err := a.Pull("", false); err != nil {
 		t.Fatal(err)
 	}
 	if f.fetches != 1 {
@@ -385,5 +386,74 @@ func TestPullSkipsViaShaPrefixWithoutNetwork(t *testing.T) {
 	}
 	if f.resolves != resolvesAfterFirst {
 		t.Errorf("second pull made a ResolveSHA call (resolves went %d -> %d)", resolvesAfterFirst, f.resolves)
+	}
+}
+
+func TestPullSourceUpdatedFlag(t *testing.T) {
+	src, _ := ParseSpec("o/r")
+	id := src.ID()
+	a := newTestApp(t, &fakeFetcher{
+		sha:   map[string]string{id: "newsha1111111111111111111111111111111111"},
+		files: map[string][]FetchedFile{id: {{Rel: "a.instructions.md", Content: []byte("a")}}},
+	})
+
+	// Brand-new source (no prior state) is "pulled", not "updated".
+	if out := a.pullSource(src, SourceState{}, false, nil); out.updated {
+		t.Errorf("brand-new source should not be updated")
+	}
+	// Existing source whose SHA moved is "updated".
+	if out := a.pullSource(src, SourceState{Repo: "o/r", SHA: "oldsha"}, true, nil); !out.updated {
+		t.Errorf("moved existing source should be updated")
+	}
+	// Existing source at the same SHA is not "updated".
+	if out := a.pullSource(src, SourceState{Repo: "o/r", SHA: "newsha1111111111111111111111111111111111"}, true, nil); out.updated {
+		t.Errorf("unchanged existing source should not be updated")
+	}
+}
+
+func TestPullJSON(t *testing.T) {
+	sNew, _ := ParseSpec("o/new")
+	sMoved, _ := ParseSpec("o/moved")
+	a := newTestApp(t, &fakeFetcher{
+		sha: map[string]string{
+			sNew.ID():   "sha1111111111111111111111111111111111111",
+			sMoved.ID(): "sha2222222222222222222222222222222222222",
+		},
+		files: map[string][]FetchedFile{
+			sNew.ID():   {{Rel: "a.instructions.md", Content: []byte("a")}},
+			sMoved.ID(): {{Rel: "b.instructions.md", Content: []byte("b")}},
+		},
+	})
+	if err := a.Paths.AddSource(sNew); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Paths.AddSource(sMoved); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-seed the "moved" source with an older SHA.
+	st, _ := a.Paths.LoadState()
+	st.Sources[sMoved.ID()] = SourceState{Repo: "o/moved", SHA: "oldshaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	if err := a.Paths.Save(st); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	a.Out = &buf
+	if err := a.Pull("", true); err != nil {
+		t.Fatal(err)
+	}
+	var res []map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &res); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
+	}
+	got := map[string]string{}
+	for _, r := range res {
+		got[r["repo"].(string)] = r["state"].(string)
+	}
+	if got["o/new"] != "pulled" {
+		t.Errorf("new source state = %q, want pulled", got["o/new"])
+	}
+	if got["o/moved"] != "updated" {
+		t.Errorf("moved source state = %q, want updated", got["o/moved"])
 	}
 }

@@ -1,6 +1,7 @@
 package gci
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -127,14 +128,18 @@ func (a *App) Add(s Source) error {
 }
 
 // Pull pulls all configured sources, or just those matching filter (id or
-// owner/repo). On a terminal every targeted row animates concurrently in the
-// full-color table; off a terminal it prints plain per-source progress lines.
-func (a *App) Pull(filter string) error {
+// owner/repo). On a terminal every targeted row animates in the full-color
+// table; off a terminal it prints plain per-source progress lines. With asJSON
+// it instead pulls quietly and emits a JSON array of per-source results.
+func (a *App) Pull(filter string, asJSON bool) error {
 	srcs, origin, err := a.Paths.LoadSources()
 	if err != nil {
 		a.msg("%v", err) // report malformed lines but continue with the rest
 	}
 	if origin == OriginNone || len(srcs) == 0 {
+		if asJSON {
+			return a.writeJSON([]pullResultJSON{})
+		}
 		a.dim("No sources configured. Add one with: gh copilot-instructions add <owner/repo[:path]>")
 		return nil
 	}
@@ -151,6 +156,31 @@ func (a *App) Pull(filter string) error {
 	}
 	if filter != "" && len(targets) == 0 {
 		return fmt.Errorf("no configured source matches %q", filter)
+	}
+
+	if asJSON {
+		results := make([]pullResultJSON, 0, len(targets))
+		var firstErr error
+		for _, i := range targets {
+			s := srcs[i]
+			prev, has := st.Sources[s.ID()]
+			out := a.pullSource(s, prev, has, nil)
+			results = append(results, pullResultFor(s, out))
+			if out.err != nil {
+				if firstErr == nil {
+					firstErr = out.err
+				}
+				continue
+			}
+			st.Sources[s.ID()] = out.newState
+		}
+		if err := a.Paths.Save(st); err != nil {
+			return err
+		}
+		if err := a.writeJSON(results); err != nil {
+			return err
+		}
+		return firstErr
 	}
 
 	t := term.FromEnv()
@@ -188,6 +218,48 @@ func (a *App) Pull(filter string) error {
 	}
 	a.printCovered("")
 	return err
+}
+
+// pullResultJSON is one source's result in `pull --json` output (field order
+// matches the table columns).
+type pullResultJSON struct {
+	State    string `json:"state"` // "pulled", "updated", or "failed"
+	ID       string `json:"id"`
+	Repo     string `json:"repo"`
+	Ref      string `json:"ref"`
+	SHA      string `json:"sha"`
+	Files    int    `json:"files"`
+	PulledAt string `json:"pulledAt"`
+}
+
+// pullResultFor maps a pull outcome to its JSON result. "updated" means an
+// existing source's commit moved; a brand-new source or an unchanged SHA is
+// "pulled"; an error or a broken/empty install is "failed".
+func pullResultFor(s Source, out pullOutcome) pullResultJSON {
+	r := pullResultJSON{ID: s.ID(), Repo: s.Repo, Ref: s.Ref}
+	switch {
+	case out.err != nil || out.row.State == StateFailed:
+		r.State = "failed"
+	case out.updated:
+		r.State = "updated"
+	default:
+		r.State = "pulled"
+	}
+	if out.err == nil {
+		r.SHA = out.newState.SHA
+		r.Files = len(out.newState.Files)
+		if !out.newState.PulledAt.IsZero() {
+			r.PulledAt = out.newState.PulledAt.Format(time.RFC3339)
+		}
+	}
+	return r
+}
+
+// writeJSON encodes v as indented JSON to stdout.
+func (a *App) writeJSON(v any) error {
+	enc := json.NewEncoder(a.Out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
 }
 
 // tableEnv returns the color scheme and width for the animated table.
@@ -234,7 +306,7 @@ var spinnerFrames = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "�
 type liveRow struct {
 	mu       sync.Mutex
 	sha      string
-	changed  bool
+	updated  bool
 	files    int
 	start    time.Time
 	done     bool
@@ -276,7 +348,7 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 				lr.mu.Lock()
 				if sha != "" {
 					lr.sha = sha
-					lr.changed = sha != prevs[p].SHA
+					lr.updated = hasPrev[p] && sha != prevs[p].SHA
 				}
 				lr.files = files
 				lr.mu.Unlock()
@@ -293,7 +365,7 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 			lr.final = final
 			lr.newState = o.newState
 			lr.hasState = o.err == nil
-			lr.changed = o.changed
+			lr.updated = o.updated
 			lr.mu.Unlock()
 			doneCh <- struct{}{}
 		}()
@@ -312,17 +384,17 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 			lr.mu.Lock()
 			switch {
 			case lr.done:
-				views[idx] = rowView{Row: lr.final, shaChanged: lr.changed}
+				views[idx] = rowView{Row: lr.final, updated: lr.updated}
 			case p == current: // actively pulling
 				rv := rows[idx]
 				rv.SHA = lr.sha
 				rv.Files = lr.files
 				views[idx] = rowView{
-					Row:        rv,
-					loading:    true,
-					spinner:    spinnerFrames[frame%len(spinnerFrames)],
-					elapsed:    elapsedSince(lr.start),
-					shaChanged: lr.changed,
+					Row:     rv,
+					loading: true,
+					spinner: spinnerFrames[frame%len(spinnerFrames)],
+					elapsed: elapsedSince(lr.start),
+					updated: lr.updated,
 				}
 			default: // queued behind the current row
 				views[idx] = rowView{Row: rows[idx], pending: true}
@@ -419,7 +491,7 @@ func indexOfID(srcs []Source, id string) int {
 type pullOutcome struct {
 	row      Row         // the resulting row
 	newState SourceState // state to record (== prev when skipped)
-	changed  bool        // the SHA differs from prev (a brand-new source => true)
+	updated  bool        // an existing source's SHA moved (new/unchanged => false)
 	skipped  bool        // already up to date; no fetch happened
 	warnings []string    // non-fatal messages (no match, collisions, unsafe paths)
 	err      error
@@ -503,7 +575,7 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 	return pullOutcome{
 		row:      a.rowForState(s, ns, true),
 		newState: ns,
-		changed:  sha != prev.SHA,
+		updated:  hasPrev && sha != prev.SHA, // only an existing source moving counts as "updated"
 		warnings: warnings,
 	}
 }

@@ -36,8 +36,8 @@ func TestAnimatedRowRender(t *testing.T) {
 	}
 }
 
-// TestSHAColor verifies the SHA cell colors: gray "-" placeholder, green when
-// changed, default (no wrap) when unchanged.
+// TestSHAColor verifies the SHA cell styling: gray "-" placeholder, italic when
+// changed, plain default when unchanged.
 func TestSHAColor(t *testing.T) {
 	a := &App{}
 	cs := &ColorScheme{enabled: true}
@@ -51,14 +51,14 @@ func TestSHAColor(t *testing.T) {
 
 	r := base
 	r.SHA = full
-	changed := renderOne(a, cs, rowView{Row: r, loading: true, spinner: spinnerFrames[0], elapsed: "0s", shaChanged: true})
-	if !strings.Contains(changed, ansiGreen+"6de16bae") {
-		t.Errorf("changed SHA should be green: %q", changed)
+	changed := renderOne(a, cs, rowView{Row: r, loading: true, spinner: spinnerFrames[0], elapsed: "0s", updated: true})
+	if !strings.Contains(changed, ansiItalic+"6de16bae") {
+		t.Errorf("changed SHA should be italic: %q", changed)
 	}
 
-	unchanged := renderOne(a, cs, rowView{Row: r, loading: true, spinner: spinnerFrames[0], elapsed: "0s", shaChanged: false})
-	if strings.Contains(unchanged, ansiGreen+"6de16bae") || strings.Contains(unchanged, ansiGray+"6de16bae") {
-		t.Errorf("unchanged SHA should be default-colored: %q", unchanged)
+	unchanged := renderOne(a, cs, rowView{Row: r, loading: true, spinner: spinnerFrames[0], elapsed: "0s", updated: false})
+	if strings.Contains(unchanged, ansiItalic+"6de16bae") || strings.Contains(unchanged, ansiGray+"6de16bae") {
+		t.Errorf("unchanged SHA should be plain default-colored: %q", unchanged)
 	}
 	if !strings.Contains(unchanged, "6de16bae") {
 		t.Errorf("SHA missing: %q", unchanged)
@@ -106,6 +106,31 @@ func TestPendingRow(t *testing.T) {
 	// Other cells keep full color (ID cyan), not dimmed.
 	if !strings.Contains(last, ansiCyan+"abc12345") {
 		t.Errorf("pending row ID should stay cyan (not dimmed): %q", last)
+	}
+}
+
+// TestMovedIcon verifies a successful pull shows ↗ (green) when the commit moved
+// and ✓ (green) when it was unchanged.
+func TestMovedIcon(t *testing.T) {
+	a := &App{}
+	cs := &ColorScheme{enabled: true}
+	row := Row{State: StatePulled, ID: "abc12345", Repo: "o/r",
+		SHA: "6de16bae1db0345805fe3399b45c1fdfdeb02544", Files: 2, PulledAt: time.Now()}
+
+	moved := renderOne(a, cs, rowView{Row: row, updated: true})
+	if !strings.Contains(moved, ansiGreen+iconMoved) {
+		t.Errorf("moved pull should show green ↗: %q", moved)
+	}
+	if strings.Contains(moved, iconPulled) {
+		t.Errorf("moved pull should not show the ✓ icon: %q", moved)
+	}
+
+	unchanged := renderOne(a, cs, rowView{Row: row, updated: false})
+	if !strings.Contains(unchanged, ansiGreen+iconPulled) {
+		t.Errorf("unchanged pull should show green ✓: %q", unchanged)
+	}
+	if strings.Contains(unchanged, iconMoved) {
+		t.Errorf("unchanged pull should not show the ↗ icon: %q", unchanged)
 	}
 }
 

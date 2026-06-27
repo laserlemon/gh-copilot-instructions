@@ -63,6 +63,7 @@ func addCmd() *cobra.Command {
 }
 
 func pullCmd() *cobra.Command {
+	var asJSON bool
 	c := &cobra.Command{
 		Use:   "pull [<id | owner/repo>]",
 		Short: "Pull all configured sources, or just one",
@@ -72,9 +73,10 @@ func pullCmd() *cobra.Command {
 			if len(args) == 1 {
 				filter = args[0]
 			}
-			return newApp().Pull(filter)
+			return newApp().Pull(filter, asJSON)
 		},
 	}
+	c.Flags().BoolVar(&asJSON, "json", false, `Output JSON (per-source state: "pulled", "updated", or "failed")`)
 	return c
 }
 

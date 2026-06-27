@@ -17,6 +17,7 @@ type ColorScheme struct {
 const (
 	ansiReset     = "\x1b[0m"
 	ansiBold      = "\x1b[1m"
+	ansiItalic    = "\x1b[3m"
 	ansiUnderline = "\x1b[4m"
 	ansiRed       = "\x1b[31m"
 	ansiGreen     = "\x1b[32m"
@@ -42,6 +43,10 @@ func (c *ColorScheme) Cyan(s string) string   { return c.wrap(ansiCyan, s) }
 
 // Gray renders muted/secondary text (the theme's "bright black").
 func (c *ColorScheme) Gray(s string) string { return c.wrap(ansiGray, s) }
+
+// Italic renders text in italics (used to flag an updated SHA), keeping the
+// default foreground color.
+func (c *ColorScheme) Italic(s string) string { return c.wrap(ansiItalic, s) }
 
 // Header renders a column header: underlined and muted gray (theme bright-black).
 func (c *ColorScheme) Header(s string) string {

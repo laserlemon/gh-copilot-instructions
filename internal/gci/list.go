@@ -20,10 +20,11 @@ import (
 //
 // <state>  ID  REPOSITORY  REF  SHA  FILES  PULLED
 //
-// The leading state column is an icon on a TTY (✓ pulled / - pending / ✗ failed)
-// and the state word when piped. ID is cyan; REPOSITORY/REF/SHA/FILES use the default
-// foreground (REF is muted gray for "(default)"); PULLED is muted gray. FILES is
-// right-aligned. Headers are underlined gray.
+// The leading state column is an icon on a TTY (↗ moved / ✓ unchanged / • pending
+// / × failed) and the state word when piped. ID is cyan; REPOSITORY/REF/SHA/FILES
+// use the default foreground (REF and SHA show a muted gray "-" when absent; an
+// updated SHA is italic); PULLED is muted gray. FILES is right-aligned. Headers
+// are underlined gray.
 func (a *App) RenderList(asJSON, raw bool) error {
 	if raw {
 		return a.renderRaw()
@@ -60,16 +61,16 @@ func (a *App) RenderList(asJSON, raw bool) error {
 //     elapsed timer in PULLED; SHA and FILES are read live from the Row.
 //   - pending: this row is queued for pull (sequential pull) — show the yellow
 //     "•" pending icon, keeping its current data.
-//   - shaChanged: render a populated SHA green (it changed this pull) instead of
-//     the default foreground.
+//   - updated: an existing source's commit moved this pull — show the ↗ icon and
+//     render the SHA italic.
 type rowView struct {
 	Row
-	dim        bool
-	loading    bool
-	pending    bool
-	spinner    string
-	elapsed    string
-	shaChanged bool
+	dim     bool
+	loading bool
+	pending bool
+	spinner string
+	elapsed string
+	updated bool
 }
 
 // staticViews wraps rows as plain full-color views (the `list` table).
@@ -126,8 +127,9 @@ func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, c
 		}
 
 		// State icon (never dimmed): cyan spinner while loading, the yellow "•"
-		// while queued for a sequential pull, else the semantic ✓/•/× in its own
-		// color.
+		// while queued for a sequential pull, else the semantic final icon. A
+		// successful pull distinguishes whether the commit moved: ↗ (green) when
+		// the SHA advanced, ✓ (green) when it was already current. Failed is ×.
 		if isTTY {
 			switch {
 			case v.loading:
@@ -135,6 +137,8 @@ func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, c
 			case v.pending:
 				icon, color := stateIcon(StatePending, cs)
 				tp.AddField(icon, tableprinter.WithColor(color))
+			case r.State == StatePulled && v.updated:
+				tp.AddField(iconMoved, tableprinter.WithColor(cs.Green))
 			default:
 				icon, color := stateIcon(r.State, cs)
 				tp.AddField(icon, tableprinter.WithColor(color))
@@ -146,14 +150,13 @@ func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, c
 		addCell(r.ID, cs.Cyan)
 		addCell(r.Repo, nil)
 		if r.Ref == "" {
-			addCell("(default)", cs.Gray)
+			addCell("-", cs.Gray) // default branch
 		} else {
 			addCell(refDisplay(r.Ref), nil)
 		}
 
-		// SHA: gray "-" until known, green if it changed this pull, else the
-		// default foreground. Target rows (loading or queued) reserve the full
-		// SHA width so the column doesn't shift as the pull progresses.
+		// SHA: gray "-" until known; otherwise the default foreground, rendered
+		// italic when the commit moved this pull (the icon column also shows ↗).
 		shaText := shaCol(r.SHA)
 		if v.loading || v.pending {
 			shaText = reserveWidth(shaText, shaDisplayWidth)
@@ -161,8 +164,8 @@ func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, c
 		switch {
 		case r.SHA == "":
 			addCell(shaText, cs.Gray)
-		case v.shaChanged:
-			addCell(shaText, cs.Green)
+		case v.updated:
+			addCell(shaText, cs.Italic)
 		default:
 			addCell(shaText, nil)
 		}
@@ -238,16 +241,25 @@ func (a *App) renderRaw() error {
 	return nil
 }
 
-// stateIcon maps a source state to a gh-checks-style icon and its color:
-// ✓ (green) pulled, • (yellow) pending, × (red) failed.
+// State-column icons (single cell each).
+const (
+	iconPulled  = "✓" // pulled, commit unchanged ("we're good")
+	iconMoved   = "↗" // pulled, commit advanced to a new SHA
+	iconFailed  = "×" // pull failed or matched no files
+	iconPending = "•" // configured but not yet pulled / queued
+)
+
+// stateIcon maps a source state to a gh-checks-style icon and its color. The
+// PULLED icon here is the "unchanged" ✓; a moved pull is rendered separately
+// with iconMoved (see renderTable).
 func stateIcon(state string, cs *ColorScheme) (string, func(string) string) {
 	switch state {
 	case StatePulled:
-		return "✓", cs.Green
+		return iconPulled, cs.Green
 	case StateFailed:
-		return "×", cs.Red
+		return iconFailed, cs.Red
 	default: // StatePending
-		return "•", cs.Yellow
+		return iconPending, cs.Yellow
 	}
 }
 
