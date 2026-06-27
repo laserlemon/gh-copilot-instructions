@@ -597,32 +597,3 @@ func TestWriteJSONCompact(t *testing.T) {
 		t.Errorf("piped JSON should end with a single trailing newline, got %q", got)
 	}
 }
-
-func TestWriteJSONFieldSelection(t *testing.T) {
-	a := newTestApp(t, &fakeFetcher{})
-	var buf bytes.Buffer
-	a.Out = &buf
-	a.JSONFields = []string{"repo", "sha"} // canonical order is repo before sha
-	src := []sourceJSON{{State: "pulled", ID: "abc", Repo: "o/r", SHA: "deadbeef", Files: 3}}
-	if err := a.writeJSON(src); err != nil {
-		t.Fatal(err)
-	}
-	got := strings.TrimSpace(buf.String())
-	want := `[{"repo":"o/r","sha":"deadbeef"}]`
-	if got != want {
-		t.Errorf("field selection = %s, want %s", got, want)
-	}
-}
-
-func TestValidateJSONFields(t *testing.T) {
-	if err := ValidateJSONFields(nil); err != nil {
-		t.Errorf("bare --json (no fields) should be valid, got %v", err)
-	}
-	if err := ValidateJSONFields([]string{"repo", "sha"}); err != nil {
-		t.Errorf("known fields should be valid, got %v", err)
-	}
-	err := ValidateJSONFields([]string{"repo", "bogus"})
-	if err == nil || !strings.Contains(err.Error(), "bogus") {
-		t.Errorf("unknown field should error naming it, got %v", err)
-	}
-}

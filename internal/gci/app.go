@@ -36,9 +36,6 @@ type App struct {
 	Err   io.Writer    // progress / messages (stderr)
 	CS    *ColorScheme // color scheme for Err (stderr) messages
 
-	// JSONFields is the optional --json=<fields> selection: nil/empty emits the
-	// full object, otherwise only these top-level keys (in canonical order).
-	JSONFields []string
 	// outTTY/outColor describe stdout, so --json output is pretty-printed and
 	// syntax-highlighted on a terminal and stays compact when piped (matching
 	// gh). They are detected once in New and default false (compact) in tests.
@@ -280,20 +277,13 @@ func pullResultFor(s Source, out pullOutcome) sourceJSON {
 	return r
 }
 
-// writeJSON marshals v (always a slice for our commands), optionally reduces
-// each element to the selected --json=<fields>, and writes it the way gh's own
-// --json does: pretty-printed and syntax-highlighted on a terminal, compact
-// (single line + newline) when piped.
+// writeJSON marshals v (always a slice for our commands) and writes it the way
+// gh's own --json does: pretty-printed and syntax-highlighted on a terminal,
+// compact (single line + newline) when piped.
 func (a *App) writeJSON(v any) error {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return err
-	}
-	if len(a.JSONFields) > 0 {
-		raw, err = filterJSONFields(raw, a.JSONFields)
-		if err != nil {
-			return err
-		}
 	}
 	if a.outTTY {
 		return jsonpretty.Format(a.Out, bytes.NewReader(raw), "  ", a.outColor)
@@ -303,67 +293,6 @@ func (a *App) writeJSON(v any) error {
 	}
 	_, err = a.Out.Write([]byte{'\n'})
 	return err
-}
-
-// filterJSONFields reduces each top-level object to the requested keys, emitted
-// in canonical (sourceJSONFields) order. It handles both a JSON array (every
-// command's normal output) and a bare object. Assumes fields were validated.
-func filterJSONFields(raw []byte, fields []string) ([]byte, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) > 0 && trimmed[0] == '[' {
-		var elems []json.RawMessage
-		if err := json.Unmarshal(trimmed, &elems); err != nil {
-			return nil, err
-		}
-		var buf bytes.Buffer
-		buf.WriteByte('[')
-		for i, e := range elems {
-			obj, err := filterJSONObject(e, fields)
-			if err != nil {
-				return nil, err
-			}
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			buf.Write(obj)
-		}
-		buf.WriteByte(']')
-		return buf.Bytes(), nil
-	}
-	return filterJSONObject(trimmed, fields)
-}
-
-func filterJSONObject(raw []byte, fields []string) ([]byte, error) {
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, err
-	}
-	wanted := make(map[string]bool, len(fields))
-	for _, f := range fields {
-		wanted[f] = true
-	}
-	var buf bytes.Buffer
-	buf.WriteByte('{')
-	first := true
-	for _, k := range sourceJSONFields {
-		if !wanted[k] {
-			continue
-		}
-		val, ok := m[k]
-		if !ok {
-			continue
-		}
-		if !first {
-			buf.WriteByte(',')
-		}
-		first = false
-		key, _ := json.Marshal(k)
-		buf.Write(key)
-		buf.WriteByte(':')
-		buf.Write(val)
-	}
-	buf.WriteByte('}')
-	return buf.Bytes(), nil
 }
 
 // tableEnv returns the color scheme and width for the animated table.
