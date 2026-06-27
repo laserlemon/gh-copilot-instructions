@@ -32,9 +32,10 @@ gh copilot-instructions remove <id | owner/repo>                    # remove one
 gh copilot-instructions remove --all                                # remove every source, all installed files, and config
 ```
 
-Every command accepts `--json` for machine-readable output, plus `--jq <expression>` and
-`--template <string>` to filter or format that JSON (the same flags built-in `gh` commands use; see
-`gh help formatting`).
+Every command accepts `--json` for machine-readable output: bare `--json` emits the full object, and
+`--json=<fields>` (for example `--json=repo,sha`) selects top-level keys, the same way built-in `gh`
+commands do. On a terminal the JSON is pretty-printed and syntax-highlighted; piped, it stays compact
+(one line) so it pipes cleanly into `jq`.
 
 - **`add`** takes a positional spec, the equivalent flags, or a mix (a flag overrides the matching
   part of the spec). A glob `path` must be quoted. Paths are repo-root-relative (a leading `/` is fine).
