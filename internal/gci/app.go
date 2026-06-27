@@ -13,7 +13,7 @@ import (
 // fetcher abstracts content fetching so tests can inject a fake.
 type fetcher interface {
 	ResolveSHA(Source) (string, error)
-	Fetch(Source) (sha, resolvedRef string, files []FetchedFile, err error)
+	Fetch(Source) (sha string, files []FetchedFile, err error)
 }
 
 // App holds the wiring for a command invocation.
@@ -123,7 +123,7 @@ func (a *App) pullOne(s Source, st *State) error {
 		a.dim("  %s  up to date (%s)", s.Repo, short(sha))
 		return nil
 	}
-	gotSHA, resolvedRef, files, err := a.F.Fetch(s)
+	gotSHA, files, err := a.F.Fetch(s)
 	if err != nil {
 		return err
 	}
@@ -147,13 +147,12 @@ func (a *App) pullOne(s Source, st *State) error {
 	}
 	sort.Strings(installed)
 	st.Sources[id] = SourceState{
-		Repo:        s.Repo,
-		Ref:         s.Ref,
-		ResolvedRef: resolvedRef,
-		Path:        s.Path,
-		SHA:         sha,
-		PulledAt:    time.Now().UTC(),
-		Files:       installed,
+		Repo:     s.Repo,
+		Ref:      s.Ref,
+		Path:     s.Path,
+		SHA:      sha,
+		PulledAt: time.Now().UTC(),
+		Files:    installed,
 	}
 	a.success("%s  %s (%s)", a.cs().Bold(s.Repo), pluralFiles(len(installed)), a.cs().Gray(short(sha)))
 	return nil
@@ -281,9 +280,6 @@ func (a *App) ListRows() ([]Row, ConfigOrigin, error) {
 			r.SHA = ss.SHA
 			r.PulledAt = ss.PulledAt
 			r.Files = len(ss.Files)
-			if r.Ref == "" {
-				r.Ref = ss.ResolvedRef // show the actual default branch we pulled
-			}
 		}
 		rows = append(rows, r)
 	}

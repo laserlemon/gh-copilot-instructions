@@ -8,13 +8,12 @@ import (
 
 // SourceState is the recorded result of the last successful pull of a source.
 type SourceState struct {
-	Repo        string    `json:"repo"`
-	Ref         string    `json:"ref"`
-	ResolvedRef string    `json:"resolved_ref"` // actual branch used (e.g. the default branch when Ref is empty)
-	Path        string    `json:"path"`
-	SHA         string    `json:"sha"`
-	PulledAt    time.Time `json:"pulled_at"`
-	Files       []string  `json:"files"` // installed filenames (relative to InstallDir); also the prune manifest
+	Repo     string    `json:"repo"`
+	Ref      string    `json:"ref"`
+	Path     string    `json:"path"`
+	SHA      string    `json:"sha"`
+	PulledAt time.Time `json:"pulled_at"`
+	Files    []string  `json:"files"` // installed filenames (relative to InstallDir); also the prune manifest
 }
 
 // State maps source id -> SourceState.

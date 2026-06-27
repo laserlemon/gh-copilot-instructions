@@ -45,8 +45,13 @@ func (c *ColorScheme) Cyan(s string) string    { return c.wrap(ansiCyan, s) }
 // Gray renders muted/secondary text (the theme's "bright black").
 func (c *ColorScheme) Gray(s string) string { return c.wrap(ansiGray, s) }
 
-// Header renders a column header: underlined, in the theme's default foreground.
-func (c *ColorScheme) Header(s string) string { return c.wrap(ansiUnderline, s) }
+// Header renders a column header: underlined and muted gray (theme bright-black).
+func (c *ColorScheme) Header(s string) string {
+	if !c.enabled || s == "" {
+		return s
+	}
+	return ansiUnderline + ansiGray + s + ansiReset
+}
 
 func (c *ColorScheme) SuccessIcon() string { return c.Green("✓") }
 func (c *ColorScheme) WarningIcon() string { return c.Yellow("!") }

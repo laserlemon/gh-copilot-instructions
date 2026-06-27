@@ -27,7 +27,7 @@ or restart the desktop app to pick up changes).
 gh copilot-instructions add <owner/repo[@ref][:path]> [--token T]   # add a source, then pull
 gh copilot-instructions add --repo R [--ref REF] [--path P] [--token T]
 gh copilot-instructions pull [<id | owner/repo>]                    # pull all configured sources, or just one
-gh copilot-instructions list [--json]                               # show sources and their pulled state
+gh copilot-instructions list [--json | --raw]                       # show sources and their pulled state
 gh copilot-instructions remove <id | owner/repo>                    # remove one source and prune its files
 gh copilot-instructions remove --all                                # remove every source, all installed files, and config
 ```
@@ -36,8 +36,9 @@ gh copilot-instructions remove --all                                # remove eve
   part of the spec). A glob `path` must be quoted. Paths are repo-root-relative (a leading `/` is fine).
 - **`pull`** is incremental: it resolves each source's current commit SHA and **skips** any source
   that's already up to date (and self-heals if installed files go missing).
-- **`list`** prints an aligned table on a terminal and tab-separated values when piped (use `--json`
-  for structured output).
+- **`list`** prints an aligned table on a terminal and tab-separated values when piped. Use `--json`
+  for structured output, or `--raw` to print the sources in config-file format (one per line, with any
+  inline tokens) — ready to paste into the multiline `GH_COPILOT_INSTRUCTIONS` Codespaces secret.
 - **`remove`** / **`remove --all`** only ever delete files this tool installed (they carry a
   `gh-copilot-instructions.` prefix) — your own hand-written instruction files are never touched.
 
@@ -76,8 +77,10 @@ Other variables: `GH_COPILOT_INSTRUCTIONS_TOKEN` (fallback token), `GH_COPILOT_I
 - **Local machine:** run the two install commands above. Re-run `gh copilot-instructions pull` to
   refresh.
 - **New Codespaces (zero-touch):** add a multiline **Codespaces secret** named
-  `GH_COPILOT_INSTRUCTIONS` (one source per line, with an inline token for any private source), and
-  put these two lines in your dotfiles install script:
+  `GH_COPILOT_INSTRUCTIONS` (one source per line, with an inline token for any private source). The
+  quickest way to produce that value is to run `gh copilot-instructions list --raw` on your machine
+  and paste the output (add tokens for any private repos). Then put these two lines in your dotfiles
+  install script:
   ```bash
   gh extension install laserlemon/gh-copilot-instructions
   gh copilot-instructions pull

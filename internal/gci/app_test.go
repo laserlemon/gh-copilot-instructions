@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -21,9 +22,9 @@ func (f *fakeFetcher) ResolveSHA(s Source) (string, error) {
 	return f.sha[s.ID()], nil
 }
 
-func (f *fakeFetcher) Fetch(s Source) (string, string, []FetchedFile, error) {
+func (f *fakeFetcher) Fetch(s Source) (string, []FetchedFile, error) {
 	f.fetches++
-	return f.sha[s.ID()], "main", f.files[s.ID()], nil
+	return f.sha[s.ID()], f.files[s.ID()], nil
 }
 
 func newTestApp(t *testing.T, f fetcher) *App {
@@ -199,5 +200,56 @@ func TestEnvOverridesFile(t *testing.T) {
 	}
 	if origin != OriginEnv || len(srcs) != 1 || srcs[0].Repo != "o/fromenv" {
 		t.Fatalf("env should override file: origin=%v srcs=%+v", origin, srcs)
+	}
+}
+
+func TestRenderRaw(t *testing.T) {
+	a := newTestApp(t, &fakeFetcher{})
+	// Two sources: one with an inline token, one without; plus a ref+path.
+	s1, _ := ParseSpec("acme/standards@main:**/*.instructions.md")
+	s1.Token = "github_pat_SECRET"
+	s2, _ := ParseSpec("oss/public-rules")
+	if err := a.Paths.AddSource(s1); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Paths.AddSource(s2); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	a.Out = &buf
+	if err := a.RenderList(false, true); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	want := "acme/standards@main:**/*.instructions.md   github_pat_SECRET\noss/public-rules\n"
+	if got != want {
+		t.Fatalf("renderRaw =\n%q\nwant\n%q", got, want)
+	}
+	// Must be free of color, headers, and comments (pasteable as-is).
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "#") || strings.Contains(got, "ID") {
+		t.Errorf("raw output not clean: %q", got)
+	}
+}
+
+func TestRenderRawRoundTripsThroughEnv(t *testing.T) {
+	a := newTestApp(t, &fakeFetcher{})
+	s, _ := ParseSpec("o/r@v1:dir")
+	s.Token = "tok123"
+	if err := a.Paths.AddSource(s); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	a.Out = &buf
+	if err := a.RenderList(false, true); err != nil {
+		t.Fatal(err)
+	}
+	// Feeding the raw output back through the env var yields the same source.
+	t.Setenv(EnvSources, buf.String())
+	srcs, origin, err := a.Paths.LoadSources()
+	if err != nil || origin != OriginEnv || len(srcs) != 1 {
+		t.Fatalf("round-trip load: origin=%v srcs=%+v err=%v", origin, srcs, err)
+	}
+	if srcs[0].ID() != s.ID() || srcs[0].Token != "tok123" {
+		t.Fatalf("round-trip mismatch: %+v", srcs[0])
 	}
 }

@@ -79,16 +79,24 @@ func pullCmd() *cobra.Command {
 }
 
 func listCmd() *cobra.Command {
-	var asJSON bool
+	var asJSON, raw bool
 	c := &cobra.Command{
 		Use:   "list",
 		Short: "List configured sources and their pulled state",
-		Args:  cobra.NoArgs,
+		Long: "List configured sources and their pulled state.\n\n" +
+			"Use --raw to print the sources in config-file format (one per line,\n" +
+			"including any inline tokens) — ready to paste into the multiline\n" +
+			"GH_COPILOT_INSTRUCTIONS Codespaces secret.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return newApp().RenderList(asJSON)
+			if asJSON && raw {
+				return fmt.Errorf("--json and --raw are mutually exclusive")
+			}
+			return newApp().RenderList(asJSON, raw)
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
+	c.Flags().BoolVar(&raw, "raw", false, "Output config-file lines to paste into a Codespaces secret")
 	return c
 }
 
