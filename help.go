@@ -57,15 +57,15 @@ func ghUsageBody(w io.Writer, c *cobra.Command) {
 		}
 	}
 
-	if c.HasExample() {
-		fmt.Fprintf(w, "\nEXAMPLES\n%s\n", c.Example)
-	}
-
 	if c.HasAvailableLocalFlags() {
 		fmt.Fprintf(w, "\nFLAGS\n%s", c.LocalFlags().FlagUsages())
 	}
 	if c.HasAvailableInheritedFlags() {
 		fmt.Fprintf(w, "\nINHERITED FLAGS\n%s", c.InheritedFlags().FlagUsages())
+	}
+
+	if c.HasExample() {
+		fmt.Fprintf(w, "\nEXAMPLES\n%s\n", c.Example)
 	}
 
 	if len(subs) > 0 {
