@@ -44,29 +44,32 @@ type commitInfo struct {
 	} `json:"commit"`
 }
 
-// resolveCommit returns the commit SHA and its tree SHA for a source's ref. A
-// 40-hex ref is treated as an immutable commit SHA (still one call to learn the
-// tree SHA). When the ref is empty the repo's default branch tip is used.
-func resolveCommit(client *api.RESTClient, s Source) (commitInfo, error) {
+type repoInfo struct {
+	DefaultBranch string `json:"default_branch"`
+}
+
+// resolveCommit returns the commit info and the resolved ref NAME for a source.
+// A 40-hex ref is an immutable commit SHA. When the ref is empty, the repo's
+// default branch is resolved (one extra call) so callers can display its name.
+func resolveCommit(client *api.RESTClient, s Source) (ci commitInfo, resolvedRef string, err error) {
 	ref := s.Ref
 	if ref == "" {
 		ref = defaultRef()
 	}
-	var ci commitInfo
 	if ref == "" {
-		var commits []commitInfo
-		if err := client.Get(fmt.Sprintf("repos/%s/commits?per_page=1", s.Repo), &commits); err != nil {
-			return ci, err
+		var ri repoInfo
+		if err = client.Get(fmt.Sprintf("repos/%s", s.Repo), &ri); err != nil {
+			return ci, "", err
 		}
-		if len(commits) == 0 {
-			return ci, fmt.Errorf("%s: no commits", s.Repo)
+		ref = ri.DefaultBranch
+		if ref == "" {
+			return ci, "", fmt.Errorf("%s: could not determine default branch", s.Repo)
 		}
-		return commits[0], nil
 	}
-	if err := client.Get(fmt.Sprintf("repos/%s/commits/%s", s.Repo, ref), &ci); err != nil {
-		return ci, err
+	if err = client.Get(fmt.Sprintf("repos/%s/commits/%s", s.Repo, ref), &ci); err != nil {
+		return ci, "", err
 	}
-	return ci, nil
+	return ci, ref, nil
 }
 
 type treeResponse struct {
@@ -88,36 +91,59 @@ type blobResponse struct {
 // Fetcher fetches matched files for sources via the GitHub API.
 type Fetcher struct{}
 
-// ResolveSHA returns just the commit SHA for a source (cheap skip check).
+// ResolveSHA returns just the commit SHA for a source (cheap skip check: a
+// single API call, and none at all when the ref is an immutable commit SHA).
 func (Fetcher) ResolveSHA(s Source) (string, error) {
 	client, err := newClient(resolveToken(s))
 	if err != nil {
 		return "", err
 	}
-	ci, err := resolveCommit(client, s)
-	if err != nil {
+	ref := s.Ref
+	if ref == "" {
+		ref = defaultRef()
+	}
+	if isFullSHA(ref) {
+		return ref, nil
+	}
+	endpoint := fmt.Sprintf("repos/%s/commits/%s", s.Repo, ref)
+	if ref == "" {
+		// Unknown ref name: the default-branch tip, learned without a repo lookup.
+		var commits []struct {
+			SHA string `json:"sha"`
+		}
+		if err := client.Get(fmt.Sprintf("repos/%s/commits?per_page=1", s.Repo), &commits); err != nil {
+			return "", err
+		}
+		if len(commits) == 0 {
+			return "", fmt.Errorf("%s: no commits", s.Repo)
+		}
+		return commits[0].SHA, nil
+	}
+	var ci commitInfo
+	if err := client.Get(endpoint, &ci); err != nil {
 		return "", err
 	}
 	return ci.SHA, nil
 }
 
 // Fetch resolves the source, lists its tree, and downloads the glob-matched
-// blobs. Returns the commit SHA and the matched files (content verbatim).
-func (Fetcher) Fetch(s Source) (string, []FetchedFile, error) {
+// blobs. Returns the commit SHA, the resolved ref name, and the matched files
+// (content verbatim).
+func (Fetcher) Fetch(s Source) (string, string, []FetchedFile, error) {
 	client, err := newClient(resolveToken(s))
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
-	ci, err := resolveCommit(client, s)
+	ci, resolvedRef, err := resolveCommit(client, s)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	var tree treeResponse
 	if err := client.Get(fmt.Sprintf("repos/%s/git/trees/%s?recursive=1", s.Repo, ci.Commit.Tree.SHA), &tree); err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	if tree.Truncated {
-		return "", nil, fmt.Errorf("%s: tree too large (truncated); narrow the path", s.Repo)
+		return "", "", nil, fmt.Errorf("%s: tree too large (truncated); narrow the path", s.Repo)
 	}
 	var files []FetchedFile
 	for _, e := range tree.Tree {
@@ -126,15 +152,15 @@ func (Fetcher) Fetch(s Source) (string, []FetchedFile, error) {
 		}
 		var blob blobResponse
 		if err := client.Get(fmt.Sprintf("repos/%s/git/blobs/%s", s.Repo, e.SHA), &blob); err != nil {
-			return "", nil, fmt.Errorf("%s: %s: %w", s.Repo, e.Path, err)
+			return "", "", nil, fmt.Errorf("%s: %s: %w", s.Repo, e.Path, err)
 		}
 		content, err := decodeBlob(blob)
 		if err != nil {
-			return "", nil, fmt.Errorf("%s: %s: %w", s.Repo, e.Path, err)
+			return "", "", nil, fmt.Errorf("%s: %s: %w", s.Repo, e.Path, err)
 		}
 		files = append(files, FetchedFile{Rel: e.Path, Content: content})
 	}
-	return ci.SHA, files, nil
+	return ci.SHA, resolvedRef, files, nil
 }
 
 func decodeBlob(b blobResponse) ([]byte, error) {
@@ -143,4 +169,19 @@ func decodeBlob(b blobResponse) ([]byte, error) {
 	}
 	clean := strings.ReplaceAll(b.Content, "\n", "")
 	return base64.StdEncoding.DecodeString(clean)
+}
+
+// isFullSHA reports whether ref is a full 40-character hex commit SHA (immutable).
+func isFullSHA(ref string) bool {
+	if len(ref) != 40 {
+		return false
+	}
+	for _, c := range ref {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }

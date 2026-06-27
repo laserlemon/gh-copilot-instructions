@@ -21,9 +21,9 @@ func (f *fakeFetcher) ResolveSHA(s Source) (string, error) {
 	return f.sha[s.ID()], nil
 }
 
-func (f *fakeFetcher) Fetch(s Source) (string, []FetchedFile, error) {
+func (f *fakeFetcher) Fetch(s Source) (string, string, []FetchedFile, error) {
 	f.fetches++
-	return f.sha[s.ID()], f.files[s.ID()], nil
+	return f.sha[s.ID()], "main", f.files[s.ID()], nil
 }
 
 func newTestApp(t *testing.T, f fetcher) *App {

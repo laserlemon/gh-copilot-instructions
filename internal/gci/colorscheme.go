@@ -6,25 +6,25 @@ import (
 	"github.com/cli/go-gh/v2/pkg/term"
 )
 
-// ColorScheme is a small gh-style semantic palette. When disabled (piped output,
-// NO_COLOR, etc.) every method returns its input unchanged, so non-terminal and
-// test output stays plain.
+// ColorScheme is a small gh-style semantic palette using ONLY the basic 16-color
+// ANSI palette, so colors are mapped by the user's terminal theme and stay
+// legible on both light and dark backgrounds. When disabled (piped output,
+// NO_COLOR, etc.) every method returns its input unchanged.
 type ColorScheme struct {
 	enabled bool
-	has256  bool
 }
 
 const (
-	ansiReset   = "\x1b[0m"
-	ansiBold    = "\x1b[1m"
-	ansiRed     = "\x1b[31m"
-	ansiGreen   = "\x1b[32m"
-	ansiYellow  = "\x1b[33m"
-	ansiBlue    = "\x1b[34m"
-	ansiMagenta = "\x1b[35m"
-	ansiCyan    = "\x1b[36m"
-	ansiGray256 = "\x1b[38;5;242m"
-	ansiGray16  = "\x1b[90m"
+	ansiReset     = "\x1b[0m"
+	ansiBold      = "\x1b[1m"
+	ansiUnderline = "\x1b[4m"
+	ansiRed       = "\x1b[31m"
+	ansiGreen     = "\x1b[32m"
+	ansiYellow    = "\x1b[33m"
+	ansiBlue      = "\x1b[34m"
+	ansiMagenta   = "\x1b[35m"
+	ansiCyan      = "\x1b[36m"
+	ansiGray      = "\x1b[90m" // bright black; the theme's "muted" color
 )
 
 func (c *ColorScheme) wrap(code, s string) string {
@@ -42,21 +42,11 @@ func (c *ColorScheme) Blue(s string) string    { return c.wrap(ansiBlue, s) }
 func (c *ColorScheme) Magenta(s string) string { return c.wrap(ansiMagenta, s) }
 func (c *ColorScheme) Cyan(s string) string    { return c.wrap(ansiCyan, s) }
 
-// Gray renders secondary/muted text, preferring a 256-color gray.
-func (c *ColorScheme) Gray(s string) string {
-	if c.has256 {
-		return c.wrap(ansiGray256, s)
-	}
-	return c.wrap(ansiGray16, s)
-}
+// Gray renders muted/secondary text (the theme's "bright black").
+func (c *ColorScheme) Gray(s string) string { return c.wrap(ansiGray, s) }
 
-// GreenBold is used for success headers.
-func (c *ColorScheme) GreenBold(s string) string {
-	if !c.enabled || s == "" {
-		return s
-	}
-	return ansiBold + ansiGreen + s + ansiReset
-}
+// Header renders a column header: underlined, in the theme's default foreground.
+func (c *ColorScheme) Header(s string) string { return c.wrap(ansiUnderline, s) }
 
 func (c *ColorScheme) SuccessIcon() string { return c.Green("✓") }
 func (c *ColorScheme) WarningIcon() string { return c.Yellow("!") }
@@ -67,10 +57,7 @@ func (c *ColorScheme) FailureIcon() string { return c.Red("✗") }
 // GH_FORCE_TTY via go-gh's term package).
 func newSchemes() (out, err *ColorScheme) {
 	t := term.FromEnv()
-	has256 := t.Is256ColorSupported()
-	outOn := t.IsColorEnabled()
-	errOn := colorEnabledFor(os.Stderr)
-	return &ColorScheme{enabled: outOn, has256: has256}, &ColorScheme{enabled: errOn, has256: has256}
+	return &ColorScheme{enabled: t.IsColorEnabled()}, &ColorScheme{enabled: colorEnabledFor(os.Stderr)}
 }
 
 // colorEnabledFor decides whether to emit color to a specific file (used for

@@ -13,7 +13,7 @@ import (
 // fetcher abstracts content fetching so tests can inject a fake.
 type fetcher interface {
 	ResolveSHA(Source) (string, error)
-	Fetch(Source) (string, []FetchedFile, error)
+	Fetch(Source) (sha, resolvedRef string, files []FetchedFile, err error)
 }
 
 // App holds the wiring for a command invocation.
@@ -123,7 +123,7 @@ func (a *App) pullOne(s Source, st *State) error {
 		a.dim("  %s  up to date (%s)", s.Repo, short(sha))
 		return nil
 	}
-	gotSHA, files, err := a.F.Fetch(s)
+	gotSHA, resolvedRef, files, err := a.F.Fetch(s)
 	if err != nil {
 		return err
 	}
@@ -147,12 +147,13 @@ func (a *App) pullOne(s Source, st *State) error {
 	}
 	sort.Strings(installed)
 	st.Sources[id] = SourceState{
-		Repo:     s.Repo,
-		Ref:      s.Ref,
-		Path:     s.Path,
-		SHA:      sha,
-		PulledAt: time.Now().UTC(),
-		Files:    installed,
+		Repo:        s.Repo,
+		Ref:         s.Ref,
+		ResolvedRef: resolvedRef,
+		Path:        s.Path,
+		SHA:         sha,
+		PulledAt:    time.Now().UTC(),
+		Files:       installed,
 	}
 	a.success("%s  %s (%s)", a.cs().Bold(s.Repo), pluralFiles(len(installed)), a.cs().Gray(short(sha)))
 	return nil
@@ -253,10 +254,9 @@ func (a *App) RemoveAll() error {
 type Row struct {
 	ID       string
 	Repo     string
-	Ref      string
+	Ref      string // the branch/tag/SHA shown in the REF column (resolved default branch when not pinned)
 	SHA      string
 	PulledAt time.Time
-	HasToken bool
 	Files    int
 }
 
@@ -270,19 +270,20 @@ func (a *App) ListRows() ([]Row, ConfigOrigin, error) {
 	if sErr != nil {
 		return nil, origin, sErr
 	}
-	envToken := strings.TrimSpace(os.Getenv(EnvToken)) != ""
 	var rows []Row
 	for _, s := range srcs {
 		r := Row{
-			ID:       s.ID(),
-			Repo:     s.Repo,
-			Ref:      s.Ref,
-			HasToken: s.Token != "" || envToken,
+			ID:   s.ID(),
+			Repo: s.Repo,
+			Ref:  s.Ref,
 		}
 		if ss, ok := st.Sources[s.ID()]; ok {
 			r.SHA = ss.SHA
 			r.PulledAt = ss.PulledAt
 			r.Files = len(ss.Files)
+			if r.Ref == "" {
+				r.Ref = ss.ResolvedRef // show the actual default branch we pulled
+			}
 		}
 		rows = append(rows, r)
 	}
