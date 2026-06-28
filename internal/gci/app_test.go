@@ -3,6 +3,7 @@ package gci
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -595,5 +596,67 @@ func TestWriteJSONCompact(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "}]\n") {
 		t.Errorf("piped JSON should end with a single trailing newline, got %q", got)
+	}
+}
+
+// errFetcher fails every fetch, simulating a hard error (repo not found, tree
+// too large, network, ...).
+type errFetcher struct{ err error }
+
+func (f *errFetcher) ResolveSHA(Source) (string, error) { return "", f.err }
+func (f *errFetcher) Fetch(Source, func(string, int)) (string, []FetchedFile, error) {
+	return "", nil, f.err
+}
+
+// TestFailedAddRecordsFailedState is the #9 regression: a failed add must be
+// recorded as FAILED (not left PENDING), and the attempt must stamp PulledAt.
+func TestFailedAddRecordsFailedState(t *testing.T) {
+	s, _ := ParseSpec("o/bad")
+	a := newTestApp(t, &errFetcher{err: errors.New("tree too large (truncated)")})
+	if err := a.Add(s, false); err == nil {
+		t.Fatal("a failing add should return the pull error")
+	}
+	st, _ := a.Paths.LoadState()
+	ss, ok := st.Sources[s.ID()]
+	if !ok {
+		t.Fatal("a failed add should record a state entry, not leave the source PENDING")
+	}
+	if ss.PulledAt.IsZero() {
+		t.Error("a failed attempt should stamp PulledAt (the attempt time)")
+	}
+	rows, _, err := a.ListRows()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].State != StateFailed {
+		t.Fatalf("list should show the failed source as FAILED, got %+v", rows)
+	}
+	if rows[0].PulledAt.IsZero() {
+		t.Error("the FAILED row should carry the attempt's PulledAt")
+	}
+}
+
+// TestFailedRepullKeepsExistingInstall verifies a transient re-pull error does
+// not destroy a previously-good install or downgrade it to FAILED.
+func TestFailedRepullKeepsExistingInstall(t *testing.T) {
+	src, _ := ParseSpec("o/r")
+	id := src.ID()
+	f := &fakeFetcher{
+		sha:   map[string]string{id: "sha1111111111111111111111111111111111111"},
+		files: map[string][]FetchedFile{id: {{Rel: "a.instructions.md", Content: []byte("a")}}},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	// Now make re-pull fail, and pull again.
+	a.F = &errFetcher{err: errors.New("network")}
+	_ = a.Pull("", false)
+	rows, _, _ := a.ListRows()
+	if len(rows) != 1 || rows[0].State != StatePulled {
+		t.Fatalf("an existing healthy source should stay PULLED after a failed re-pull, got %+v", rows)
 	}
 }

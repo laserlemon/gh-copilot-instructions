@@ -116,9 +116,7 @@ func (a *App) Add(s Source, asJSON bool) error {
 	if asJSON {
 		prev, has := st.Sources[s.ID()]
 		out := a.pullSource(s, prev, has, nil)
-		if out.err == nil {
-			st.Sources[s.ID()] = out.newState
-		}
+		st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
 		if e := a.Paths.Save(st); e != nil {
 			return e
 		}
@@ -133,9 +131,7 @@ func (a *App) Add(s Source, asJSON bool) error {
 		prev, has := st.Sources[s.ID()]
 		out := a.pullSource(s, prev, has, nil)
 		a.printOutcome(s, out)
-		if out.err == nil {
-			st.Sources[s.ID()] = out.newState
-		}
+		st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
 		if e := a.Paths.Save(st); e != nil {
 			return e
 		}
@@ -199,13 +195,10 @@ func (a *App) Pull(filter string, asJSON bool) error {
 			prev, has := st.Sources[s.ID()]
 			out := a.pullSource(s, prev, has, nil)
 			results = append(results, pullResultFor(s, out))
-			if out.err != nil {
-				if firstErr == nil {
-					firstErr = out.err
-				}
-				continue
+			st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
+			if out.err != nil && firstErr == nil {
+				firstErr = out.err
 			}
-			st.Sources[s.ID()] = out.newState
 		}
 		if err := a.Paths.Save(st); err != nil {
 			return err
@@ -224,13 +217,10 @@ func (a *App) Pull(filter string, asJSON bool) error {
 			prev, has := st.Sources[s.ID()]
 			out := a.pullSource(s, prev, has, nil)
 			a.printOutcome(s, out)
-			if out.err != nil {
-				if firstErr == nil {
-					firstErr = out.err
-				}
-				continue
+			st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
+			if out.err != nil && firstErr == nil {
+				firstErr = out.err
 			}
-			st.Sources[s.ID()] = out.newState
 		}
 		if err := a.Paths.Save(st); err != nil {
 			return err
@@ -345,7 +335,6 @@ type liveRow struct {
 	done     bool
 	final    Row
 	newState SourceState
-	hasState bool
 	err      error
 }
 
@@ -397,7 +386,6 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 			lr.err = o.err
 			lr.final = final
 			lr.newState = o.newState
-			lr.hasState = o.err == nil
 			lr.updated = o.updated
 			lr.mu.Unlock()
 			doneCh <- struct{}{}
@@ -472,19 +460,16 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 	}
 	repaint() // final settled frame
 
-	// Apply results (all goroutines have finished).
+	// Apply results (all goroutines have finished). Every attempt is recorded -
+	// a failed pull of a new source persists as FAILED (not PENDING); an
+	// existing source keeps its prior good install (pullSource's failState).
 	var firstErr error
 	for p, i := range targets {
 		lr := lives[p]
-		if lr.err != nil {
-			if firstErr == nil {
-				firstErr = lr.err
-			}
-			continue
+		if lr.err != nil && firstErr == nil {
+			firstErr = lr.err
 		}
-		if lr.hasState {
-			st.Sources[srcs[i].ID()] = lr.newState
-		}
+		st.Sources[srcs[i].ID()] = lr.newState
 	}
 	return firstErr
 }
@@ -540,27 +525,49 @@ type pullOutcome struct {
 // run concurrently for distinct sources). onProgress, when non-nil, reports the
 // resolved SHA (early, before blobs) and the running file count.
 func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress func(sha string, files int)) pullOutcome {
+	now := time.Now().UTC()
+	// failState is what we persist when an attempt fails: a brand-new source
+	// becomes a recorded FAILED row (no files) stamped with the attempt time, so
+	// `list` shows it as FAILED rather than PENDING. An existing source keeps its
+	// prior good install - one transient re-pull error shouldn't destroy a
+	// working install or downgrade it.
+	failState := func() pullOutcome {
+		ns := prev
+		if !hasPrev {
+			ns = SourceState{Repo: s.Repo, Ref: s.Ref, Path: s.Path, PulledAt: now}
+		}
+		return pullOutcome{newState: ns, row: a.rowForState(s, ns, true)}
+	}
+
 	healthy := hasPrev && a.allFilesExist(prev.Files)
 	if healthy {
 		// Skip without any network call when the configured ref is an immutable
 		// commit-ish (≥7 hex digits) that is a left-pinned prefix of the SHA we
 		// already pulled - it can only point at that same commit.
 		if refPinsTo(s.Ref, prev.SHA) {
-			return pullOutcome{row: a.rowForState(s, prev, true), newState: prev, skipped: true}
+			ns := prev
+			ns.PulledAt = now // PULLED tracks the last attempt, even a no-op
+			return pullOutcome{row: a.rowForState(s, ns, true), newState: ns, skipped: true}
 		}
 		// Otherwise resolve the current tip (one API call) and compare.
 		sha, err := a.F.ResolveSHA(s)
 		if err != nil {
-			return pullOutcome{err: err}
+			o := failState()
+			o.err = err
+			return o
 		}
 		if prev.SHA == sha {
-			return pullOutcome{row: a.rowForState(s, prev, true), newState: prev, skipped: true}
+			ns := prev
+			ns.PulledAt = now // PULLED tracks the last attempt, even a no-op
+			return pullOutcome{row: a.rowForState(s, ns, true), newState: ns, skipped: true}
 		}
 	}
 
 	sha, files, err := a.F.Fetch(s, onProgress)
 	if err != nil {
-		return pullOutcome{err: err}
+		o := failState()
+		o.err = err
+		return o
 	}
 	var warnings []string
 	if len(files) == 0 {
@@ -592,7 +599,9 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 		}
 		seen[rel] = f.Rel
 		if err := a.writeInstall(rel, f.Content); err != nil {
-			return pullOutcome{err: err}
+			o := failState()
+			o.err = err
+			return o
 		}
 		installed = append(installed, rel)
 	}
@@ -606,7 +615,7 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 		Ref:      s.Ref,
 		Path:     s.Path,
 		SHA:      sha,
-		PulledAt: time.Now().UTC(),
+		PulledAt: now,
 		Files:    installed,
 	}
 	return pullOutcome{
