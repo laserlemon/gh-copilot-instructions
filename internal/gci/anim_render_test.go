@@ -180,3 +180,20 @@ func TestAnimatedSHAReservesWidthSingleRow(t *testing.T) {
 		t.Errorf("row width changed when SHA filled: empty=%d filled=%d\n empty=%q\n filled=%q", we, wf, empty, full)
 	}
 }
+
+// TestFailedIcon verifies a FAILED row renders the red ✗ (U+2717) icon, and that
+// the glyph is a single display column (so the state column stays aligned).
+func TestFailedIcon(t *testing.T) {
+	a := &App{}
+	cs := &ColorScheme{enabled: true}
+	last := renderOne(a, cs, rowView{Row: Row{State: StateFailed, ID: "abc12345", Repo: "o/r"}})
+	if !strings.Contains(last, ansiRed+"✗") {
+		t.Errorf("failed row should show a red ✗ icon: %q", last)
+	}
+	if strings.ContainsRune(last, '×') {
+		t.Errorf("failed row should not use the old × glyph: %q", last)
+	}
+	if w := text.DisplayWidth(iconFailed); w != 1 {
+		t.Errorf("iconFailed display width = %d, want 1", w)
+	}
+}

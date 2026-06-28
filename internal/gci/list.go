@@ -263,7 +263,7 @@ func (a *App) renderRaw() error {
 const (
 	iconPulled  = "✓" // pulled, commit unchanged ("we're good")
 	iconMoved   = "↗" // pulled, commit advanced to a new SHA
-	iconFailed  = "×" // pull failed or matched no files
+	iconFailed  = "✗" // pull failed or matched no files
 	iconPending = "•" // configured but not yet pulled / queued
 )
 
