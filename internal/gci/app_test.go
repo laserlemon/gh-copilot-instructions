@@ -453,11 +453,11 @@ func TestPullJSON(t *testing.T) {
 		got[r["repository"].(string)] = r["state"].(string)
 		refs[r["repository"].(string)] = r["ref"].(string)
 	}
-	if got["o/new"] != "pulled" {
-		t.Errorf("new source state = %q, want pulled", got["o/new"])
+	if got["o/new"] != "PULLED" {
+		t.Errorf("new source state = %q, want PULLED", got["o/new"])
 	}
-	if got["o/moved"] != "updated" {
-		t.Errorf("moved source state = %q, want updated", got["o/moved"])
+	if got["o/moved"] != "UPDATED" {
+		t.Errorf("moved source state = %q, want UPDATED", got["o/moved"])
 	}
 	// A default-branch ref is rendered as "-" (a usable GitHub blob URL ref).
 	if refs["o/new"] != "-" {
@@ -483,8 +483,8 @@ func TestAddJSON(t *testing.T) {
 	if len(res) != 1 {
 		t.Fatalf("add --json: want 1 element, got %d", len(res))
 	}
-	if res[0]["repository"] != "o/added" || res[0]["state"] != "pulled" {
-		t.Errorf("add --json element = %v, want repo o/added state pulled", res[0])
+	if res[0]["repository"] != "o/added" || res[0]["state"] != "PULLED" {
+		t.Errorf("add --json element = %v, want o/added PULLED", res[0])
 	}
 }
 
@@ -680,5 +680,40 @@ func TestJSONFieldNames(t *testing.T) {
 		if strings.Contains(s, k) {
 			t.Errorf("unexpected old key %s in %s", k, s)
 		}
+	}
+}
+
+// TestStateCasingConvention locks state casing: the state word is UPPERCASE on
+// every surface that shows it as a word (piped TSV and JSON); the TTY uses a
+// glyph instead.
+func TestStateCasingConvention(t *testing.T) {
+	a := &App{}
+	cs := &ColorScheme{enabled: false}
+	rows := []Row{
+		{State: StatePulled, ID: "a", Repo: "o/r"},
+		{State: StatePending, ID: "b", Repo: "o/s"},
+		{State: StateFailed, ID: "c", Repo: "o/t"},
+	}
+	var tsv bytes.Buffer
+	if err := a.renderTable(&tsv, staticViews(rows), false, 100, cs); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{"PULLED", "PENDING", "FAILED"} {
+		if !strings.Contains(tsv.String(), w) {
+			t.Errorf("piped TSV should contain uppercase %q:\n%s", w, tsv.String())
+		}
+	}
+	var jb bytes.Buffer
+	a.Out = &jb
+	if err := a.renderListJSON(rows); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{`"PULLED"`, `"PENDING"`, `"FAILED"`} {
+		if !strings.Contains(jb.String(), w) {
+			t.Errorf("--json should contain uppercase %s:\n%s", w, jb.String())
+		}
+	}
+	if strings.Contains(jb.String(), `"pulled"`) {
+		t.Errorf("--json should not contain a lowercase state:\n%s", jb.String())
 	}
 }

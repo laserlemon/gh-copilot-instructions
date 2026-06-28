@@ -244,18 +244,19 @@ func (a *App) Pull(filter string, asJSON bool) error {
 	return err
 }
 
-// pullResultFor maps a pull outcome to its JSON result. "updated" means an
+// pullResultFor maps a pull outcome to its JSON result. UPDATED means an
 // existing source's commit moved; a brand-new source or an unchanged SHA is
-// "pulled"; an error or a broken/empty install is "failed".
+// PULLED; an error or a broken/empty install is FAILED. State is uppercase on
+// every surface (table, TSV, JSON), matching gh.
 func pullResultFor(s Source, out pullOutcome) sourceJSON {
 	r := sourceJSON{ID: s.ID(), Repo: s.Repo, Ref: refJSON(s.Ref)}
 	switch {
 	case out.err != nil || out.row.State == StateFailed:
-		r.State = "failed"
+		r.State = StateFailed
 	case out.updated:
-		r.State = "updated"
+		r.State = "UPDATED"
 	default:
-		r.State = "pulled"
+		r.State = StatePulled
 	}
 	if out.err == nil {
 		r.SHA = out.newState.SHA
@@ -757,8 +758,10 @@ func (a *App) RemoveAll(asJSON bool) error {
 	return nil
 }
 
-// Source states, as shown in the list output (uppercase, matching GitHub's
-// state-string convention).
+// Source states. Casing convention (#5): the state word is UPPERCASE on every
+// surface that spells it out - the piped TSV column and --json - matching gh's
+// state strings (OPEN/MERGED). The colored TTY table shows a glyph instead of
+// the word, so casing is moot there. pull/add add an UPDATED state in --json.
 const (
 	StatePulled  = "PULLED"  // recorded and every installed file is present
 	StatePending = "PENDING" // configured but not yet pulled
