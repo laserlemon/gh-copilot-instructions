@@ -30,12 +30,17 @@ const DefaultPath = "**/*.instructions.md"
 // prune/remove never touch the user's own hand-written instruction files.
 const FileDir = "gh-copilot-instructions"
 
-// ParseSpec parses an "owner/repo[@ref][:path]" source spec (no token).
+// ParseSpec parses an "owner/repo[@ref][:path]" source spec (no token). A GitHub
+// blob/tree URL (e.g. https://github.com/owner/repo/blob/main/path/file.md) is
+// also accepted and normalized to the same Source.
 func ParseSpec(spec string) (Source, error) {
 	var s Source
 	rest := strings.TrimSpace(spec)
 	if rest == "" {
 		return s, fmt.Errorf("empty source")
+	}
+	if s, ok, err := parseGitHubURL(rest); ok {
+		return s, err
 	}
 	// :path  (first colon; owner/repo and refs never contain ':')
 	if i := strings.IndexByte(rest, ':'); i >= 0 {
@@ -54,6 +59,53 @@ func ParseSpec(spec string) (Source, error) {
 	// Normalize a leading slash on paths ("/instructions" == "instructions").
 	s.Path = strings.TrimPrefix(s.Path, "/")
 	return s, nil
+}
+
+// parseGitHubURL recognizes a github.com web URL and normalizes it to a Source.
+// It returns ok=false (so ParseSpec falls back to spec parsing) for anything
+// that isn't a github.com URL.
+//
+// Supported shapes (scheme optional):
+//
+//	github.com/owner/repo                          -> whole repo, default branch
+//	github.com/owner/repo/blob/<ref>/<path>        -> a file at <ref>
+//
+// A ref of "-" means the default branch (GitHub redirects /blob/-/… there), so
+// it maps to an empty Ref. A ref containing a slash (e.g. "feature/x") can't be
+// told apart from the path in a web URL and isn't supported - use the
+// owner/repo@ref:path spec for those. tree/ (directory) URLs are intentionally
+// not accepted yet (no "-" parity, and the target files are under-specified).
+func parseGitHubURL(spec string) (Source, bool, error) {
+	u := strings.TrimPrefix(strings.TrimPrefix(spec, "https://"), "http://")
+	if !strings.HasPrefix(u, "github.com/") {
+		return Source{}, false, nil
+	}
+	u = strings.TrimPrefix(u, "github.com/")
+	if i := strings.IndexAny(u, "?#"); i >= 0 { // drop query / #fragment
+		u = u[:i]
+	}
+	parts := strings.Split(strings.Trim(u, "/"), "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return Source{}, true, fmt.Errorf("invalid GitHub URL: %q", spec)
+	}
+	s := Source{Repo: parts[0] + "/" + parts[1]}
+	if !validRepo(s.Repo) {
+		return s, true, fmt.Errorf("invalid GitHub URL repository: %q", s.Repo)
+	}
+	if len(parts) >= 3 {
+		if parts[2] != "blob" {
+			return s, true, fmt.Errorf("only blob URLs are supported (not /%s/): %q", parts[2], spec)
+		}
+		if len(parts) >= 4 {
+			if ref := parts[3]; ref != "-" { // "-" => default branch
+				s.Ref = ref
+			}
+		}
+		if len(parts) >= 5 {
+			s.Path = strings.Join(parts[4:], "/")
+		}
+	}
+	return s, true, nil
 }
 
 // ParseLine parses a full config line: a spec plus an optional trailing token.

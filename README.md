@@ -59,6 +59,14 @@ A **source** is one line: `owner/repo[@ref][:path]` with an optional trailing to
 - The trailing token (last whitespace-separated field) is only needed for a private source when your
   `gh` auth can't read it (e.g. in Codespaces).
 
+You can also `add` a **GitHub blob URL** and it's normalized to the same source — handy for copy-paste
+from the browser:
+
+```
+gh copilot-instructions add https://github.com/owner/repo/blob/main/path/to/file.md   # a file
+gh copilot-instructions add https://github.com/owner/repo/blob/-/instructions/x.md    # - = default branch
+```
+
 Configuration lives in **one of two places, same format**:
 
 - **Local file** `~/.config/gh-copilot-instructions/sources` (mode `600`), managed by `add`/`remove`.
