@@ -322,7 +322,7 @@ func reserveWidth(s string, w int) string {
 
 func pulledCol(t time.Time, isTTY bool) string {
 	if t.IsZero() {
-		return "-"
+		return "~" // never pulled (null), matching the SHA column's "~"
 	}
 	if isTTY {
 		return text.RelativeTimeAgo(time.Now(), t)
