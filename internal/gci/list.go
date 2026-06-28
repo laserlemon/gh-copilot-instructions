@@ -17,10 +17,10 @@ import (
 //
 // Columns (TTY/TSV/JSON share this order):
 //
-// <state>  ID  REPOSITORY  REF  SHA  FILES  PULLED
+// <state>  SLUG  REPOSITORY  REF  SHA  FILES  PULLED
 //
 // The leading state column is an icon on a TTY (↗ moved / ✓ unchanged / • pending
-// / × failed) and the state word when piped. ID is cyan; REPOSITORY/REF/SHA/FILES
+// / × failed) and the state word when piped. SLUG is cyan; REPOSITORY/REF/SHA/FILES
 // use the default foreground (REF and SHA show a muted gray "-" when absent; an
 // updated SHA is italic); PULLED is muted gray. FILES is right-aligned. Headers
 // are underlined gray.
@@ -107,7 +107,7 @@ func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, c
 		// width (one space) and the color underlines it, giving a single-space
 		// underline like `gh pr checks`.
 		tp.AddField("", tableprinter.WithColor(cs.Header))
-		tp.AddField("ID", tableprinter.WithColor(cs.Header), padRight)
+		tp.AddField("SLUG", tableprinter.WithColor(cs.Header), padRight)
 		tp.AddField("REPOSITORY", tableprinter.WithColor(cs.Header), padRight)
 		tp.AddField("REF", tableprinter.WithColor(cs.Header), padRight)
 		tp.AddField("SHA", tableprinter.WithColor(cs.Header), padRight)
@@ -219,11 +219,11 @@ func (a *App) renderViews(views []rowView, width int, cs *ColorScheme) []string 
 // "pulled"/"updated"/"failed"; remove reports "removed".
 type sourceJSON struct {
 	State    string `json:"state"`
-	ID       string `json:"id"`
-	Repo     string `json:"repo"`
+	ID       string `json:"slug"`
+	Repo     string `json:"repository"`
 	Ref      string `json:"ref"`
 	SHA      string `json:"sha"`
-	Files    int    `json:"files"`
+	Files    int    `json:"fileCount"`
 	PulledAt string `json:"pulledAt"`
 }
 
