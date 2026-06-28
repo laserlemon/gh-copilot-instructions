@@ -46,20 +46,20 @@ func rootCmd() *cobra.Command {
 func newApp() *gci.App { return gci.New(os.Stdout, os.Stderr) }
 
 func addCmd() *cobra.Command {
-	var repo, ref, path, token string
+	var repo, ref, glob, pathAlias, token string
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "add [<owner/repo[@ref][:path]>]",
 		Short: "Add a source and pull it",
 		Long: "Add a source, then pull. Provide a positional spec, or use flags, or\n" +
-			"mix them (a flag overrides the matching part of the spec). Quote a glob path.\n\n" +
+			"mix them (a flag overrides the matching part of the spec). Quote a glob.\n\n" +
 			"With --json, the added source is reported as a one-element array whose\n" +
 			`state is "pulled", "updated", or "failed".`,
 		Example: heredoc(`
-			# Add a source by owner/repo (default branch, default path)
+			# Add a source by owner/repo (default branch, default glob)
 			$ gh copilot-instructions add github/team-instructions
 
-			# Pin a ref and select a path within the repo
+			# Pin a ref and select a path within the repository
 			$ gh copilot-instructions add github/team-instructions@main:instructions
 
 			# Build the source from flags instead of a spec
@@ -70,7 +70,11 @@ func addCmd() *cobra.Command {
 			if len(args) == 1 {
 				spec = args[0]
 			}
-			s, err := buildSource(spec, repo, ref, path, token)
+			pathOrGlob := glob
+			if pathOrGlob == "" {
+				pathOrGlob = pathAlias // accept the deprecated --path
+			}
+			s, err := buildSource(spec, repo, ref, pathOrGlob, token)
 			if err != nil {
 				return err
 			}
@@ -79,7 +83,9 @@ func addCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&repo, "repo", "", "Source repository (`owner/repo`)")
 	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repo's default branch)")
-	c.Flags().StringVar(&path, "path", "", "Glob/file/dir within the repo (default: **/*.instructions.md)")
+	c.Flags().StringVar(&glob, "glob", "", "Glob, file, or directory within the repo (default: **/*.instructions.md)")
+	c.Flags().StringVar(&pathAlias, "path", "", "")
+	_ = c.Flags().MarkDeprecated("path", "use --glob instead")
 	c.Flags().StringVar(&token, "token", "", "Token for a private source (default: your gh auth)")
 	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	return c
