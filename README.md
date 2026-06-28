@@ -52,12 +52,13 @@ and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly i
 
 A **source** is one line: `owner/repo[@ref][:path]` with an optional trailing token.
 
-- `@ref` — branch, tag, or commit SHA (default: the repo's default branch). A full commit SHA is
-  treated as immutable, so it never re-fetches.
+- `@ref` — branch, tag, or commit SHA (default: the repository's default branch). A full commit SHA
+  is treated as immutable, so it never re-fetches.
 - `:path` — a recursive glob, a file, or a directory (default: `**/*.instructions.md`, anywhere in
-  the repo). Matched files are copied **verbatim**.
-- The trailing token (last whitespace-separated field) is only needed for a private source when your
-  `gh` auth can't read it (e.g. in Codespaces).
+  the repository). Matched files are copied **verbatim**.
+- The trailing token (last whitespace-separated field) is only needed for a private repository when
+  your `gh` auth can't read it (e.g. in Codespaces). It needs **read access to repository contents**
+  — a fine-grained PAT with `Contents: read`, or a classic token with the `repo` scope.
 
 Configuration lives in **one of two places, same format**:
 

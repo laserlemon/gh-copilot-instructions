@@ -53,6 +53,10 @@ func addCmd() *cobra.Command {
 		Short: "Add a source and pull it",
 		Long: "Add a source, then pull. Provide a positional spec, or use flags, or\n" +
 			"mix them (a flag overrides the matching part of the spec). Quote a glob.\n\n" +
+			"For a private repository, --token needs read access to repository contents\n" +
+			"(a fine-grained PAT with \"Contents: read\", or a classic token with the\n" +
+			"\"repo\" scope). Public repositories need no token; your gh auth is used by\n" +
+			"default.\n\n" +
 			"With --json, the added source is reported as a one-element array whose\n" +
 			`state is "pulled", "updated", or "failed".`,
 		Example: heredoc(`
@@ -82,11 +86,11 @@ func addCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&repo, "repo", "", "Source repository (`owner/repo`)")
-	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repo's default branch)")
-	c.Flags().StringVar(&glob, "glob", "", "Glob, file, or directory within the repo (default: **/*.instructions.md)")
+	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
+	c.Flags().StringVar(&glob, "glob", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
 	c.Flags().StringVar(&pathAlias, "path", "", "")
 	_ = c.Flags().MarkDeprecated("path", "use --glob instead")
-	c.Flags().StringVar(&token, "token", "", "Token for a private source (default: your gh auth)")
+	c.Flags().StringVar(&token, "token", "", "Token with Contents: read for a private repository (default: your gh auth)")
 	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	return c
 }
@@ -107,7 +111,7 @@ func pullCmd() *cobra.Command {
 			# Pull just one source by id or owner/repo
 			$ gh copilot-instructions pull github/team-instructions
 
-			# List the repos whose commit changed on this pull
+			# List the repositories whose commit changed on this pull
 			$ gh copilot-instructions pull --json | jq -r '.[] | select(.state=="updated") | .repo'`),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
