@@ -123,7 +123,10 @@ func (a *App) Add(s Source, asJSON bool) error {
 		if err := a.writeJSON([]sourceJSON{pullResultFor(s, out)}); err != nil {
 			return err
 		}
-		return out.err
+		if out.err != nil {
+			return ErrReported // the failure is in the JSON (state: failed)
+		}
+		return nil
 	}
 
 	t := term.FromEnv()
@@ -136,7 +139,8 @@ func (a *App) Add(s Source, asJSON bool) error {
 			return e
 		}
 		if out.err != nil {
-			return out.err
+			a.printFailures([]failure{{s.Repo, friendlyError(s, out.err)}})
+			return ErrReported
 		}
 		a.printCovered(s.ID())
 		return nil
@@ -149,8 +153,7 @@ func (a *App) Add(s Source, asJSON bool) error {
 		return e
 	}
 	if err != nil {
-		a.fail("%s: %v", s.Repo, err)
-		return err
+		return err // animate already printed the failure summary
 	}
 	a.printCovered(s.ID())
 	return nil
@@ -189,15 +192,15 @@ func (a *App) Pull(filter string, asJSON bool) error {
 
 	if asJSON {
 		results := make([]sourceJSON, 0, len(targets))
-		var firstErr error
+		failed := false
 		for _, i := range targets {
 			s := srcs[i]
 			prev, has := st.Sources[s.ID()]
 			out := a.pullSource(s, prev, has, nil)
 			results = append(results, pullResultFor(s, out))
 			st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
-			if out.err != nil && firstErr == nil {
-				firstErr = out.err
+			if out.err != nil {
+				failed = true
 			}
 		}
 		if err := a.Paths.Save(st); err != nil {
@@ -206,27 +209,34 @@ func (a *App) Pull(filter string, asJSON bool) error {
 		if err := a.writeJSON(results); err != nil {
 			return err
 		}
-		return firstErr
+		if failed {
+			return ErrReported // failures are in the JSON (state: failed)
+		}
+		return nil
 	}
 
 	t := term.FromEnv()
 	if !t.IsTerminalOutput() {
-		var firstErr error
+		var fails []failure
 		for _, i := range targets {
 			s := srcs[i]
 			prev, has := st.Sources[s.ID()]
 			out := a.pullSource(s, prev, has, nil)
 			a.printOutcome(s, out)
 			st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
-			if out.err != nil && firstErr == nil {
-				firstErr = out.err
+			if out.err != nil {
+				fails = append(fails, failure{s.Repo, friendlyError(s, out.err)})
 			}
 		}
 		if err := a.Paths.Save(st); err != nil {
 			return err
 		}
+		if len(fails) > 0 {
+			a.printFailures(fails)
+			return ErrReported
+		}
 		a.printCovered("")
-		return firstErr
+		return nil
 	}
 
 	rows := a.rowsFor(srcs, st)
@@ -309,8 +319,7 @@ func (a *App) printOutcome(s Source, out pullOutcome) {
 		a.warn("%s", w)
 	}
 	if out.err != nil {
-		a.fail("%s: %v", s.Repo, out.err)
-		return
+		return // failures are summarized together below the output
 	}
 	if out.skipped {
 		a.dim("  %s  up to date (%s)", s.Repo, short(out.newState.SHA))
@@ -463,15 +472,19 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 	// Apply results (all goroutines have finished). Every attempt is recorded -
 	// a failed pull of a new source persists as FAILED (not PENDING); an
 	// existing source keeps its prior good install (pullSource's failState).
-	var firstErr error
+	var fails []failure
 	for p, i := range targets {
 		lr := lives[p]
-		if lr.err != nil && firstErr == nil {
-			firstErr = lr.err
+		if lr.err != nil {
+			fails = append(fails, failure{srcs[i].Repo, friendlyError(srcs[i], lr.err)})
 		}
 		st.Sources[srcs[i].ID()] = lr.newState
 	}
-	return firstErr
+	if len(fails) > 0 {
+		a.printFailures(fails) // summary below the settled table
+		return ErrReported
+	}
+	return nil
 }
 
 // paintDiff repaints the table in place, rewriting only the lines that changed
