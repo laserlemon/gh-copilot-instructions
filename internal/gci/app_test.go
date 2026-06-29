@@ -276,7 +276,7 @@ func TestRenderRaw(t *testing.T) {
 		t.Fatalf("renderRaw =\n%q\nwant\n%q", got, want)
 	}
 	// Must be free of color, headers, and comments (pasteable as-is).
-	if strings.Contains(got, "\x1b") || strings.Contains(got, "#") || strings.Contains(got, "ID") {
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "#") || strings.Contains(got, "SLUG") {
 		t.Errorf("raw output not clean: %q", got)
 	}
 }
@@ -450,8 +450,8 @@ func TestPullJSON(t *testing.T) {
 	got := map[string]string{}
 	refs := map[string]string{}
 	for _, r := range res {
-		got[r["repo"].(string)] = r["state"].(string)
-		refs[r["repo"].(string)] = r["ref"].(string)
+		got[r["repository"].(string)] = r["state"].(string)
+		refs[r["repository"].(string)] = r["ref"].(string)
 	}
 	if got["o/new"] != "pulled" {
 		t.Errorf("new source state = %q, want pulled", got["o/new"])
@@ -483,7 +483,7 @@ func TestAddJSON(t *testing.T) {
 	if len(res) != 1 {
 		t.Fatalf("add --json: want 1 element, got %d", len(res))
 	}
-	if res[0]["repo"] != "o/added" || res[0]["state"] != "pulled" {
+	if res[0]["repository"] != "o/added" || res[0]["state"] != "pulled" {
 		t.Errorf("add --json element = %v, want repo o/added state pulled", res[0])
 	}
 }
@@ -519,8 +519,8 @@ func TestRemoveJSONReturnsRemaining(t *testing.T) {
 	if len(res) != 1 {
 		t.Fatalf("remove --json: want 1 remaining source, got %d: %s", len(res), buf.String())
 	}
-	if res[0]["repo"] != "o/two" {
-		t.Errorf("remaining source = %v, want o/two", res[0]["repo"])
+	if res[0]["repository"] != "o/two" {
+		t.Errorf("remaining source = %v, want o/two", res[0]["repository"])
 	}
 }
 
@@ -574,7 +574,7 @@ func TestPullFilterTargetsOneSource(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &res); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
 	}
-	if len(res) != 1 || res[0]["repo"] != "o/one" {
+	if len(res) != 1 || res[0]["repository"] != "o/one" {
 		t.Fatalf("pull o/one --json = %s, want only o/one", buf.String())
 	}
 	if f.fetches != 1 {
@@ -658,5 +658,27 @@ func TestFailedRepullKeepsExistingInstall(t *testing.T) {
 	rows, _, _ := a.ListRows()
 	if len(rows) != 1 || rows[0].State != StatePulled {
 		t.Fatalf("an existing healthy source should stay PULLED after a failed re-pull, got %+v", rows)
+	}
+}
+
+// TestJSONFieldNames locks the public --json field names: slug/repository/
+// fileCount (not the old id/repo/files, and not the internal state.json keys).
+func TestJSONFieldNames(t *testing.T) {
+	a := newTestApp(t, &fakeFetcher{})
+	var buf bytes.Buffer
+	a.Out = &buf
+	if err := a.writeJSON([]sourceJSON{{State: "pulled", ID: "abc", Repo: "o/r", SHA: "deadbeef", Files: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	s := buf.String()
+	for _, k := range []string{`"slug"`, `"repository"`, `"fileCount"`} {
+		if !strings.Contains(s, k) {
+			t.Errorf("missing %s in %s", k, s)
+		}
+	}
+	for _, k := range []string{`"id"`, `"repo"`, `"files"`} {
+		if strings.Contains(s, k) {
+			t.Errorf("unexpected old key %s in %s", k, s)
+		}
 	}
 }
