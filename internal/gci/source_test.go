@@ -187,3 +187,36 @@ func TestRefPinsTo(t *testing.T) {
 		t.Error("refPinsTo with empty sha should be false")
 	}
 }
+
+// TestParseSpecGitHubURL covers accepting a GitHub blob URL as a source.
+func TestParseSpecGitHubURL(t *testing.T) {
+	cases := []struct{ spec, repo, ref, path string }{
+		{"https://github.com/o/r/blob/main/path/to/file.md", "o/r", "main", "path/to/file.md"},
+		{"https://github.com/o/r/blob/-/instructions/x.md", "o/r", "", "instructions/x.md"},
+		{"github.com/o/r", "o/r", "", ""},                                         // scheme optional, whole repo
+		{"https://github.com/o/r/blob/main/file.md#L5", "o/r", "main", "file.md"}, // fragment dropped
+		{"https://github.com/o/r/", "o/r", "", ""},                                // trailing slash
+	}
+	for _, c := range cases {
+		s, err := ParseSpec(c.spec)
+		if err != nil {
+			t.Fatalf("ParseSpec(%q): %v", c.spec, err)
+		}
+		if s.Repo != c.repo || s.Ref != c.ref || s.Path != c.path {
+			t.Errorf("ParseSpec(%q) = {repo:%q ref:%q path:%q}, want {%q %q %q}",
+				c.spec, s.Repo, s.Ref, s.Path, c.repo, c.ref, c.path)
+		}
+	}
+}
+
+func TestParseSpecGitHubURLErrors(t *testing.T) {
+	for _, spec := range []string{
+		"https://github.com/o/r/tree/main/instructions", // tree not supported yet
+		"https://github.com/o/r/raw/main/x.md",          // not a blob URL
+		"https://github.com/onlyowner",                  // missing repo
+	} {
+		if _, err := ParseSpec(spec); err == nil {
+			t.Errorf("ParseSpec(%q) should error", spec)
+		}
+	}
+}
