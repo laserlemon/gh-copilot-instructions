@@ -193,9 +193,9 @@ func TestParseSpecGitHubURL(t *testing.T) {
 	cases := []struct{ spec, repo, ref, path string }{
 		{"https://github.com/o/r/blob/main/path/to/file.md", "o/r", "main", "path/to/file.md"},
 		{"https://github.com/o/r/blob/-/instructions/x.md", "o/r", "", "instructions/x.md"},
-		{"github.com/o/r", "o/r", "", ""},                                         // scheme optional, whole repo
-		{"https://github.com/o/r/blob/main/file.md#L5", "o/r", "main", "file.md"}, // fragment dropped
-		{"https://github.com/o/r/", "o/r", "", ""},                                // trailing slash
+		{"github.com/o/r", "o/r", "", ""},
+		{"https://github.com/o/r/blob/main/file.md#L5", "o/r", "main", "file.md"},
+		{"https://github.com/o/r/", "o/r", "", ""},
 	}
 	for _, c := range cases {
 		s, err := ParseSpec(c.spec)
@@ -203,20 +203,70 @@ func TestParseSpecGitHubURL(t *testing.T) {
 			t.Fatalf("ParseSpec(%q): %v", c.spec, err)
 		}
 		if s.Repo != c.repo || s.Ref != c.ref || s.Path != c.path {
-			t.Errorf("ParseSpec(%q) = {repo:%q ref:%q path:%q}, want {%q %q %q}",
-				c.spec, s.Repo, s.Ref, s.Path, c.repo, c.ref, c.path)
+			t.Errorf("ParseSpec(%q) = {repo:%q ref:%q path:%q}, want {%q %q %q}", c.spec, s.Repo, s.Ref, s.Path, c.repo, c.ref, c.path)
 		}
 	}
 }
 
 func TestParseSpecGitHubURLErrors(t *testing.T) {
 	for _, spec := range []string{
-		"https://github.com/o/r/tree/main/instructions", // tree not supported yet
-		"https://github.com/o/r/raw/main/x.md",          // not a blob URL
-		"https://github.com/onlyowner",                  // missing repo
+		"https://github.com/o/r/tree/main/instructions",
+		"https://github.com/o/r/raw/main/x.md",
+		"https://github.com/onlyowner",
 	} {
 		if _, err := ParseSpec(spec); err == nil {
 			t.Errorf("ParseSpec(%q) should error", spec)
 		}
+	}
+}
+
+// TestParseSpecRefAndPath covers the "owner/repo[@ref][:path]" spec forms.
+func TestParseSpecRefAndPath(t *testing.T) {
+	cases := []struct{ spec, repo, ref, path string }{
+		{"o/r", "o/r", "", ""},
+		{"o/r:instructions", "o/r", "", "instructions"},
+		{"o/r:instructions/topics", "o/r", "", "instructions/topics"},
+		{"o/r@v1.2.0:docs/x.instructions.md", "o/r", "v1.2.0", "docs/x.instructions.md"},
+		{"o/r:/leading/slash", "o/r", "", "leading/slash"},
+	}
+	for _, c := range cases {
+		s, err := ParseSpec(c.spec)
+		if err != nil {
+			t.Fatalf("ParseSpec(%q): %v", c.spec, err)
+		}
+		if s.Repo != c.repo || s.Ref != c.ref || s.Path != c.path {
+			t.Errorf("ParseSpec(%q) = {repo:%q ref:%q path:%q}, want {%q %q %q}", c.spec, s.Repo, s.Ref, s.Path, c.repo, c.ref, c.path)
+		}
+	}
+}
+
+// TestSourceMatchesScopesToPath verifies a :path narrows the pull: a directory
+// takes every *.md under it, a single file takes only itself, the default takes
+// **/*.instructions.md.
+func TestSourceMatchesScopesToPath(t *testing.T) {
+	dir := Source{Repo: "o/r", Path: "instructions/topics"}
+	for _, rel := range []string{"instructions/topics/a.instructions.md", "instructions/topics/sub/b.md"} {
+		if !dir.matches(rel) {
+			t.Errorf("dir path should match %q", rel)
+		}
+	}
+	for _, rel := range []string{"instructions/general.instructions.md", "other/c.instructions.md", "README.md"} {
+		if dir.matches(rel) {
+			t.Errorf("dir path should NOT match %q", rel)
+		}
+	}
+	file := Source{Repo: "o/r", Path: "instructions/general.instructions.md"}
+	if !file.matches("instructions/general.instructions.md") {
+		t.Error("single-file path should match the exact file")
+	}
+	if file.matches("instructions/other.instructions.md") {
+		t.Error("single-file path should match only the exact file")
+	}
+	def := Source{Repo: "o/r"}
+	if !def.matches("deep/x.instructions.md") {
+		t.Error("default should match **/*.instructions.md")
+	}
+	if def.matches("deep/x.md") {
+		t.Error("default should not match a plain .md")
 	}
 }
