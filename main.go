@@ -202,7 +202,7 @@ func heredoc(s string) string {
 func buildSource(spec, repo, ref, path, token string) (gci.Source, error) {
 	var s gci.Source
 	if spec != "" {
-		parsed, err := gci.ParseSpec(spec)
+		parsed, err := newApp().ResolveSpec(spec)
 		if err != nil {
 			return s, err
 		}
