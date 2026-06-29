@@ -214,9 +214,9 @@ func (a *App) renderViews(views []rowView, width int, cs *ColorScheme) []string 
 }
 
 // sourceJSON is one source's JSON representation, shared by every command's
-// --json output (field order matches the TTY/TSV columns). State is lowercase:
-// list reports "pulled"/"pending"/"failed"; pull/add report
-// "pulled"/"updated"/"failed"; remove reports "removed".
+// --json output (field order matches the TTY/TSV columns). State is uppercase
+// on every surface (table, TSV, JSON), matching gh: list reports
+// PULLED/PENDING/FAILED; pull/add also report UPDATED.
 type sourceJSON struct {
 	State    string `json:"state"`
 	ID       string `json:"slug"`
@@ -235,7 +235,7 @@ func (a *App) renderListJSON(rows []Row) error {
 			pulled = r.PulledAt.Format(time.RFC3339)
 		}
 		items = append(items, sourceJSON{
-			State: strings.ToLower(r.State), ID: r.ID, Repo: r.Repo, Ref: refJSON(r.Ref),
+			State: r.State, ID: r.ID, Repo: r.Repo, Ref: refJSON(r.Ref),
 			SHA: r.SHA, Files: r.Files, PulledAt: pulled,
 		})
 	}
