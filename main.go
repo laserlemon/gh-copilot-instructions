@@ -21,7 +21,7 @@ func tokenHint(err error) error {
 	m := strings.ToLower(err.Error())
 	if strings.Contains(m, "404") || strings.Contains(m, "403") ||
 		strings.Contains(m, "not found") || strings.Contains(m, "forbidden") {
-		return fmt.Errorf("%w\nif gh auth can't reach this repository, pass --token (a PAT with Contents: read)", err)
+		return fmt.Errorf("%w\nIf gh cannot access a repository, you may provide a personal access token (with permission to read repository contents) using --token.", err)
 	}
 	return err
 }
@@ -67,10 +67,9 @@ func addCmd() *cobra.Command {
 		Short: "Add a source and pull it",
 		Long: "Add a source, then pull. Provide a positional spec, or use flags, or\n" +
 			"mix them (a flag overrides the matching part of the spec). Quote a glob.\n\n" +
-			"Your gh auth is used by default (and may already cover private repos);\n" +
-			"--token (a PAT with Contents: read) is only needed where gh auth can't\n" +
-			"reach the repository, e.g. in Codespaces. With --json, the added source is\n" +
-			`reported as a one-element array whose state is PULLED, UPDATED, or FAILED.`,
+			"Your gh auth is used by default. If gh cannot access a repository, you may\n" +
+			"provide a personal access token (with permission to read repository\n" +
+			"contents) using --token.",
 		Example: heredoc(`
 			# Add a source by owner/repo (default branch, default path)
 			$ gh copilot-instructions add github/team-instructions
@@ -96,7 +95,7 @@ func addCmd() *cobra.Command {
 	c.Flags().StringVar(&repo, "repo", "", "Source repository (`owner/repo`)")
 	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
 	c.Flags().StringVar(&path, "path", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
-	c.Flags().StringVar(&token, "token", "", "Token (Contents: read) for when gh auth can't reach the repository")
+	c.Flags().StringVar(&token, "token", "", "Personal access token (read repository contents) for when gh cannot access a repository")
 	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	return c
 }
