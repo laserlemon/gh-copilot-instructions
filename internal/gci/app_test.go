@@ -564,7 +564,8 @@ func TestPullFilterTargetsOneSource(t *testing.T) {
 	if err := a.Paths.AddSource(s2); err != nil {
 		t.Fatal(err)
 	}
-	// A filtered pull --json must touch (and report) only the matched source.
+	// A filtered pull touches only the matched source, but --json now returns the
+	// full current source list (o/one pulled, o/two still pending).
 	var buf bytes.Buffer
 	a.Out = &buf
 	if err := a.Pull("o/one", true); err != nil {
@@ -574,8 +575,12 @@ func TestPullFilterTargetsOneSource(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &res); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
 	}
-	if len(res) != 1 || res[0]["repository"] != "o/one" {
-		t.Fatalf("pull o/one --json = %s, want only o/one", buf.String())
+	byRepo := map[string]string{}
+	for _, r := range res {
+		byRepo[r["repository"].(string)] = r["state"].(string)
+	}
+	if byRepo["o/one"] != "PULLED" || byRepo["o/two"] != "PENDING" {
+		t.Fatalf("pull o/one --json = %s, want o/one PULLED + o/two PENDING", buf.String())
 	}
 	if f.fetches != 1 {
 		t.Errorf("fetches = %d, want 1 (only the matched source)", f.fetches)
@@ -715,5 +720,33 @@ func TestStateCasingConvention(t *testing.T) {
 	}
 	if strings.Contains(jb.String(), `"pulled"`) {
 		t.Errorf("--json should not contain a lowercase state:\n%s", jb.String())
+	}
+}
+
+// TestPullJSONReturnsFullListWithUpdated: pull --json returns the full source
+// list, marking a moved source UPDATED and leaving an untouched one PENDING.
+func TestPullJSONReturnsFullListWithUpdated(t *testing.T) {
+	s1, _ := ParseSpec("o/one")
+	s2, _ := ParseSpec("o/two")
+	a := newTestApp(t, &fakeFetcher{
+		sha:   map[string]string{s1.ID(): "aaa1111111111111111111111111111111111111"},
+		files: map[string][]FetchedFile{s1.ID(): {{Rel: "a.instructions.md", Content: []byte("a")}}},
+	})
+	a.Paths.AddSource(s1)
+	a.Paths.AddSource(s2)
+	st, _ := a.Paths.LoadState()
+	st.Sources[s1.ID()] = SourceState{Repo: "o/one", SHA: "old", Files: []string{"x"}}
+	a.Paths.Save(st)
+	var buf bytes.Buffer
+	a.Out = &buf
+	_ = a.Pull("o/one", true)
+	var res []map[string]any
+	json.Unmarshal(buf.Bytes(), &res)
+	got := map[string]string{}
+	for _, r := range res {
+		got[r["repository"].(string)] = r["state"].(string)
+	}
+	if got["o/one"] != "UPDATED" || got["o/two"] != "PENDING" {
+		t.Errorf("got %v, want o/one UPDATED + o/two PENDING", got)
 	}
 }

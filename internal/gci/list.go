@@ -228,14 +228,26 @@ type sourceJSON struct {
 }
 
 func (a *App) renderListJSON(rows []Row) error {
+	return a.renderListJSONUpdated(rows, nil)
+}
+
+// renderListJSONUpdated emits the full source list as JSON; any source id in
+// `updated` whose state is PULLED is reported as UPDATED (its commit moved this
+// run), preserving the "what changed" signal while every command returns the
+// current list of sources.
+func (a *App) renderListJSONUpdated(rows []Row, updated map[string]bool) error {
 	items := make([]sourceJSON, 0, len(rows))
 	for _, r := range rows {
 		pulled := ""
 		if !r.PulledAt.IsZero() {
 			pulled = r.PulledAt.Format(time.RFC3339)
 		}
+		state := r.State
+		if updated[r.ID] && state == StatePulled {
+			state = "UPDATED"
+		}
 		items = append(items, sourceJSON{
-			State: r.State, ID: r.ID, Repo: r.Repo, Ref: refJSON(r.Ref),
+			State: state, ID: r.ID, Repo: r.Repo, Ref: refJSON(r.Ref),
 			SHA: r.SHA, Files: r.Files, PulledAt: pulled,
 		})
 	}

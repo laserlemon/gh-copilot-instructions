@@ -120,7 +120,11 @@ func (a *App) Add(s Source, asJSON bool) error {
 		if e := a.Paths.Save(st); e != nil {
 			return e
 		}
-		if err := a.writeJSON([]sourceJSON{pullResultFor(s, out)}); err != nil {
+		upd := map[string]bool{}
+		if out.updated {
+			upd[s.ID()] = true
+		}
+		if err := a.renderSourceListJSON(upd); err != nil {
 			return err
 		}
 		return out.err
@@ -188,14 +192,16 @@ func (a *App) Pull(filter string, asJSON bool) error {
 	}
 
 	if asJSON {
-		results := make([]sourceJSON, 0, len(targets))
+		upd := map[string]bool{}
 		var firstErr error
 		for _, i := range targets {
 			s := srcs[i]
 			prev, has := st.Sources[s.ID()]
 			out := a.pullSource(s, prev, has, nil)
-			results = append(results, pullResultFor(s, out))
 			st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
+			if out.updated {
+				upd[s.ID()] = true
+			}
 			if out.err != nil && firstErr == nil {
 				firstErr = out.err
 			}
@@ -203,7 +209,7 @@ func (a *App) Pull(filter string, asJSON bool) error {
 		if err := a.Paths.Save(st); err != nil {
 			return err
 		}
-		if err := a.writeJSON(results); err != nil {
+		if err := a.renderSourceListJSON(upd); err != nil {
 			return err
 		}
 		return firstErr
@@ -242,30 +248,6 @@ func (a *App) Pull(filter string, asJSON bool) error {
 	}
 	a.printCovered("")
 	return err
-}
-
-// pullResultFor maps a pull outcome to its JSON result. UPDATED means an
-// existing source's commit moved; a brand-new source or an unchanged SHA is
-// PULLED; an error or a broken/empty install is FAILED. State is uppercase on
-// every surface (table, TSV, JSON), matching gh.
-func pullResultFor(s Source, out pullOutcome) sourceJSON {
-	r := sourceJSON{ID: s.ID(), Repo: s.Repo, Ref: refJSON(s.Ref)}
-	switch {
-	case out.err != nil || out.row.State == StateFailed:
-		r.State = StateFailed
-	case out.updated:
-		r.State = "UPDATED"
-	default:
-		r.State = StatePulled
-	}
-	if out.err == nil {
-		r.SHA = out.newState.SHA
-		r.Files = len(out.newState.Files)
-		if !out.newState.PulledAt.IsZero() {
-			r.PulledAt = out.newState.PulledAt.Format(time.RFC3339)
-		}
-	}
-	return r
 }
 
 // writeJSON marshals v (always a slice for our commands) and writes it the way
@@ -711,6 +693,17 @@ func (a *App) Remove(idOrRepo string, asJSON bool) error {
 		a.warn("%s is set and overrides the config file.", EnvSources)
 	}
 	return nil
+}
+
+// renderSourceListJSON emits the current source list as JSON (the shape of
+// `list --json`); ids in `updated` whose state is PULLED show as UPDATED. Every
+// command's --json output uses this, so they all return the current sources.
+func (a *App) renderSourceListJSON(updated map[string]bool) error {
+	rows, _, err := a.ListRows()
+	if err != nil {
+		return err
+	}
+	return a.renderListJSONUpdated(rows, updated)
 }
 
 // renderRemainingJSON emits the current source list as JSON (the same shape as
