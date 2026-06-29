@@ -12,6 +12,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// tokenHint appends a --token nudge to permission-style failures (404/403), so a
+// user who hit a private or inaccessible repository learns the likely fix.
+func tokenHint(err error) error {
+	if err == nil {
+		return nil
+	}
+	m := strings.ToLower(err.Error())
+	if strings.Contains(m, "404") || strings.Contains(m, "403") ||
+		strings.Contains(m, "not found") || strings.Contains(m, "forbidden") {
+		return fmt.Errorf("%w\nIf gh cannot access a repository, you may provide a personal access token (with permission to read repository contents) using --token.", err)
+	}
+	return err
+}
+
 func main() {
 	if err := rootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -52,14 +66,15 @@ func addCmd() *cobra.Command {
 		Use:   "add [<owner/repo[@ref][:path]>]",
 		Short: "Add a source and pull it",
 		Long: "Add a source, then pull. Provide a positional spec, or use flags, or\n" +
-			"mix them (a flag overrides the matching part of the spec). Quote a glob path.\n\n" +
-			"With --json, the added source is reported as a one-element array whose\n" +
-			`state is "pulled", "updated", or "failed".`,
+			"mix them (a flag overrides the matching part of the spec). Quote a glob.\n\n" +
+			"Your gh auth is used by default. If gh cannot access a repository, you may\n" +
+			"provide a personal access token (with permission to read repository\n" +
+			"contents) using --token.",
 		Example: heredoc(`
 			# Add a source by owner/repo (default branch, default path)
 			$ gh copilot-instructions add github/team-instructions
 
-			# Pin a ref and select a path within the repo
+			# Pin a ref and select a path within the repository
 			$ gh copilot-instructions add github/team-instructions@main:instructions
 
 			# Build the source from flags instead of a spec
@@ -74,13 +89,13 @@ func addCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return newApp().Add(s, asJSON)
+			return tokenHint(newApp().Add(s, asJSON))
 		},
 	}
 	c.Flags().StringVar(&repo, "repo", "", "Source repository (`owner/repo`)")
-	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repo's default branch)")
-	c.Flags().StringVar(&path, "path", "", "Glob/file/dir within the repo (default: **/*.instructions.md)")
-	c.Flags().StringVar(&token, "token", "", "Token for a private source (default: your gh auth)")
+	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
+	c.Flags().StringVar(&path, "path", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
+	c.Flags().StringVar(&token, "token", "", "Personal access token (read repository contents) for when gh cannot access a repository")
 	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	return c
 }
@@ -109,7 +124,7 @@ func pullCmd() *cobra.Command {
 			if len(args) == 1 {
 				filter = args[0]
 			}
-			return newApp().Pull(filter, asJSON)
+			return tokenHint(newApp().Pull(filter, asJSON))
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
