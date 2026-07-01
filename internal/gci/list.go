@@ -46,6 +46,7 @@ func (a *App) RenderList(asJSON, raw bool) error {
 
 	if len(rows) == 0 {
 		a.dim("No sources configured (%s).", origin)
+		a.blank()
 		a.dim("Add one with: gh copilot-instructions add <owner/repo[:path]>")
 		return nil
 	}

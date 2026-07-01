@@ -91,6 +91,18 @@ func (a *App) dim(format string, args ...any) {
 	a.msg("%s", a.cs().Gray(fmt.Sprintf(format, args...)))
 }
 
+// blank prints an empty line. It separates primary output (the result) from the
+// secondary block (supporting detail: warnings, hints, file locations).
+func (a *App) blank() { a.msg("") }
+
+// note prints a secondary warning line: a yellow "!" status icon (kept colored,
+// because it communicates status) followed by muted gray supporting text. Use it
+// for warnings that belong in the secondary block; use warn for a warning that
+// is itself the primary result.
+func (a *App) note(format string, args ...any) {
+	a.msg("%s %s", a.cs().WarningIcon(), a.cs().Gray(fmt.Sprintf(format, args...)))
+}
+
 // Add upserts a source into the local config file, then pulls just that source.
 // On a terminal it renders the full instructions table with that row animating
 // (spinner + live SHA/FILES + elapsed) while every other row is dimmed, settling
@@ -144,13 +156,13 @@ func (a *App) Add(s Source, asJSON bool) error {
 		if out.err != nil {
 			return out.err
 		}
-		a.printCovered(s.ID())
+		a.printPullFooter(out.warnings, s.ID())
 		return nil
 	}
 
 	rows := a.rowsFor(srcs, st)
 	cs, w := a.tableEnv(t)
-	err = a.animate(rows, srcs, []int{target}, true, st, cs, w)
+	warnings, err := a.animate(rows, srcs, []int{target}, true, st, cs, w)
 	if e := a.Paths.Save(st); e != nil {
 		return e
 	}
@@ -158,7 +170,7 @@ func (a *App) Add(s Source, asJSON bool) error {
 		a.fail("%s: %v", s.Repo, err)
 		return err
 	}
-	a.printCovered(s.ID())
+	a.printPullFooter(warnings, s.ID())
 	return nil
 }
 
@@ -175,7 +187,9 @@ func (a *App) Pull(filter string, asJSON bool) error {
 		if asJSON {
 			return a.writeJSON([]sourceJSON{})
 		}
-		a.dim("No sources configured. Add one with: gh copilot-instructions add <owner/repo[:path]>")
+		a.dim("No sources configured.")
+		a.blank()
+		a.dim("Add one with: gh copilot-instructions add <owner/repo[:path]>")
 		return nil
 	}
 	st, err := a.Paths.LoadState()
@@ -220,11 +234,13 @@ func (a *App) Pull(filter string, asJSON bool) error {
 	t := term.FromEnv()
 	if !t.IsTerminalOutput() {
 		var firstErr error
+		var warnings []string
 		for _, i := range targets {
 			s := srcs[i]
 			prev, has := st.Sources[s.ID()]
 			out := a.pullSource(s, prev, has, nil)
 			a.printOutcome(s, out)
+			warnings = append(warnings, out.warnings...)
 			st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
 			if out.err != nil && firstErr == nil {
 				firstErr = out.err
@@ -233,7 +249,7 @@ func (a *App) Pull(filter string, asJSON bool) error {
 		if err := a.Paths.Save(st); err != nil {
 			return err
 		}
-		a.printCovered("")
+		a.printPullFooter(warnings, "")
 		return firstErr
 	}
 
@@ -241,14 +257,14 @@ func (a *App) Pull(filter string, asJSON bool) error {
 	cs, w := a.tableEnv(t)
 	// A filtered pull focuses the matched rows (and dims the rest), like add; an
 	// unfiltered pull animates every row with no dimming.
-	err = a.animate(rows, srcs, targets, filter != "", st, cs, w)
+	warnings, err := a.animate(rows, srcs, targets, filter != "", st, cs, w)
 	if e := a.Paths.Save(st); e != nil {
 		return e
 	}
 	if err != nil {
 		return err
 	}
-	a.printCovered("")
+	a.printPullFooter(warnings, "")
 	return err
 }
 
@@ -288,11 +304,11 @@ func (a *App) rowsFor(srcs []Source, st *State) []Row {
 	return rows
 }
 
-// printOutcome prints the plain (non-animated) per-source result for a pull.
+// printOutcome prints the plain (non-animated) per-source result line for a
+// pull: the primary output for that source. Warnings are not printed here - the
+// caller collects them across sources and prints them in the secondary block
+// (see printPullFooter).
 func (a *App) printOutcome(s Source, out pullOutcome) {
-	for _, w := range out.warnings {
-		a.warn("%s", w)
-	}
 	if out.err != nil {
 		a.fail("%s: %v", s.Repo, out.err)
 		return
@@ -320,6 +336,7 @@ type liveRow struct {
 	done     bool
 	final    Row
 	newState SourceState
+	warnings []string
 	err      error
 }
 
@@ -327,8 +344,10 @@ type liveRow struct {
 // the live table: the current row shows a yellow spinner, rows queued behind it
 // show the yellow "•" pending icon, finished rows settle to their final state,
 // and non-target rows render dimmed when dimOthers (the `add` focus effect) or
-// full-color static. Results are applied to st; returns the first pull error.
-func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, st *State, cs *ColorScheme, width int) error {
+// full-color static. Results are applied to st; it returns the warnings
+// collected across the pulled sources (for the caller's secondary block) and the
+// first pull error.
+func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, st *State, cs *ColorScheme, width int) ([]string, error) {
 	out := a.Out
 
 	// Per-target state, indexed by position in the targets order.
@@ -372,6 +391,7 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 			lr.final = final
 			lr.newState = o.newState
 			lr.updated = o.updated
+			lr.warnings = o.warnings
 			lr.mu.Unlock()
 			doneCh <- struct{}{}
 		}()
@@ -449,14 +469,16 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 	// a failed pull of a new source persists as FAILED (not PENDING); an
 	// existing source keeps its prior good install (pullSource's failState).
 	var firstErr error
+	var warnings []string
 	for p, i := range targets {
 		lr := lives[p]
 		if lr.err != nil && firstErr == nil {
 			firstErr = lr.err
 		}
 		st.Sources[srcs[i].ID()] = lr.newState
+		warnings = append(warnings, lr.warnings...)
 	}
-	return firstErr
+	return warnings, firstErr
 }
 
 // paintDiff repaints the table in place, rewriting only the lines that changed
@@ -703,7 +725,8 @@ func (a *App) Remove(idOrRepo string, asJSON bool) error {
 	}
 	a.success("Removed %s", a.cs().Bold(idOrRepo))
 	if EnvSet() && len(removedFromFile) > 0 {
-		a.warn("%s is set and overrides the config file.", EnvSources)
+		a.blank()
+		a.note("%s is set and overrides the config file.", EnvSources)
 	}
 	return nil
 }
@@ -760,6 +783,7 @@ func (a *App) RemoveAll(asJSON bool) error {
 		return a.renderRemainingJSON()
 	}
 	a.success("Removed all configured sources and every installed file.")
+	a.blank()
 	a.dim("To remove the command itself: gh extension remove gh-copilot-instructions")
 	return nil
 }
@@ -826,17 +850,22 @@ func (a *App) ListRows() ([]Row, ConfigOrigin, error) {
 	return rows, origin, nil
 }
 
-// printCovered prints the post-pull footer. When id is non-empty (a single
-// source, as in `add`) it points at that source's install directory; otherwise
-// (a full `pull`) it points at the base install directory.
-func (a *App) printCovered(id string) {
-	cs := a.cs()
+// printPullFooter prints the secondary block that follows a pull/add's primary
+// output: a separating blank line, any warnings collected across the pulled
+// sources (yellow "!" + gray, one topic per line), then the muted install-
+// location line. When id is non-empty (a single source, as in `add`) the
+// location points at that source's install directory; otherwise (a full `pull`)
+// it points at the base install directory.
+func (a *App) printPullFooter(warnings []string, id string) {
+	a.blank()
+	for _, w := range warnings {
+		a.note("%s", w)
+	}
 	dir := a.Paths.InstallDir
 	if id != "" {
 		dir = filepath.Join(a.Paths.InstallDir, FileDir, id)
 	}
-	a.msg("")
-	a.msg("%s %s", cs.SuccessIcon(), cs.Gray("Instructions installed to: "+dir))
+	a.dim("Instructions installed to: %s", dir)
 }
 
 func pluralFiles(n int) string {

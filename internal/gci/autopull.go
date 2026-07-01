@@ -309,32 +309,28 @@ func (a *App) AutoPullStatus(asJSON bool) error {
 	return nil
 }
 
-// printAutoPull renders the one canonical human status block that enable,
-// disable, and status all share, so the three commands read identically for a
-// given state. Layout: a state headline (icon + one line), then any drift/
-// no-source notes (yellow •), then flush-left gray metadata lines. Headline
-// icons match the `list` command: green ✓ (enabled), red ✗ (disabled), yellow •
-// (a note / unsupported).
+// printAutoPull renders the one canonical status block that enable, disable, and
+// status all share, following the tool's primary/secondary model: a single
+// primary headline (status icon + primary text), a blank separator line, then a
+// gray secondary block (one topic per line). Headline icons match the `list`
+// command: green ✓ (enabled), red ✗ (disabled), yellow ! (unsupported). Notes in
+// the secondary block use the yellow ! status icon with gray text; the enable
+// command stays the primary color so it stands out as the thing to run.
 //
 //	✓ Auto-pull is enabled - every 3 hours, via launchd.
+//
 //	Runs: gh copilot-instructions pull
 //	Log:  ~/.local/state/gh-copilot-instructions/auto-pull.log
 //
 //	✗ Auto-pull is disabled.
-//	Enable it with: gh copilot-instructions auto-pull enable
 //
-//	• Auto-pull isn't supported on linux yet - it currently requires macOS.
-//	Schedule gh copilot-instructions pull with your own scheduler instead.
+//	Enable it with: gh copilot-instructions auto-pull enable
 func (a *App) printAutoPull(st *State) {
 	cs := a.cs()
-	// note prints a yellow-• line at the icon margin (the pending glyph `list`
-	// uses); it is informational, not an error.
-	note := func(format string, args ...any) {
-		a.msg("%s %s", cs.Yellow("•"), fmt.Sprintf(format, args...))
-	}
 	sc := a.sched()
 	if !sc.Supported() {
-		note("Auto-pull isn't supported on %s yet - it currently requires macOS.", sc.Kind())
+		a.warn("Auto-pull isn't supported on %s yet - it currently requires macOS.", sc.Kind())
+		a.blank()
 		a.dim("Schedule `gh copilot-instructions pull` with your own scheduler (cron, Task Scheduler).")
 		return
 	}
@@ -342,19 +338,21 @@ func (a *App) printAutoPull(st *State) {
 	installed, ierr := sc.Installed()
 	if enabled {
 		a.msg("%s Auto-pull is enabled - %s, via %s.", cs.Green("✓"), cadenceFromState(st).Human(), sc.Kind())
+		a.blank()
 		if ierr == nil && !installed {
-			note("The scheduled job is missing; re-run `auto-pull enable` to reinstall it.")
+			a.note("The scheduled job is missing; re-run `gh copilot-instructions auto-pull enable` to reinstall it.")
 		}
 		if srcs, origin, _ := a.Paths.LoadSources(); origin == OriginNone || len(srcs) == 0 {
-			note("No sources are configured yet; add one with: gh copilot-instructions add <owner/repo[:path]>")
+			a.note("No sources are configured yet; add one with `gh copilot-instructions add <owner/repo[:path]>`.")
 		}
 		a.dim("Runs: gh copilot-instructions pull")
 		a.dim("Log:  %s", filepath.Join(a.Paths.StateDir, "auto-pull.log"))
 		return
 	}
 	a.msg("%s Auto-pull is disabled.", cs.Red("✗"))
+	a.blank()
 	if ierr == nil && installed {
-		note("A scheduled job is still installed; run `auto-pull disable` to remove it.")
+		a.note("A scheduled job is still installed; run `gh copilot-instructions auto-pull disable` to remove it.")
 	}
 	// The enable command stays the primary (default) foreground so it stands out
 	// as the thing to run; only its "Enable it with:" label is muted.
