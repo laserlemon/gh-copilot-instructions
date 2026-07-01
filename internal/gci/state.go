@@ -19,7 +19,18 @@ type SourceState struct {
 
 // State maps source id -> SourceState.
 type State struct {
-	Sources map[string]SourceState `json:"sources"`
+	Sources  map[string]SourceState `json:"sources"`
+	AutoPull *AutoPullState         `json:"autoPull,omitempty"`
+}
+
+// AutoPullState records the user's scheduled-pull intent (see autopull.go). It
+// is nil until auto-pull is first enabled. The OS scheduler (launchd/cron) is
+// the source of truth for whether a job is actually installed; this is the
+// recorded intent that `status` reconciles against.
+type AutoPullState struct {
+	Enabled   bool      `json:"enabled"`
+	Cadence   string    `json:"cadence"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // LoadState reads state.json (returns an empty State if absent).

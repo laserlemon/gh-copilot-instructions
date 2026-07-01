@@ -32,6 +32,7 @@ type fetcher interface {
 type App struct {
 	Paths Paths
 	F     fetcher
+	Sched scheduler    // OS scheduler for auto-pull (nil => resolved per-platform)
 	Out   io.Writer    // data (stdout)
 	Err   io.Writer    // progress / messages (stderr)
 	CS    *ColorScheme // color scheme for Err (stderr) messages
@@ -50,6 +51,7 @@ func New(out, errw io.Writer) *App {
 	return &App{
 		Paths:    DefaultPaths(),
 		F:        Fetcher{},
+		Sched:    newScheduler(DefaultPaths()),
 		Out:      out,
 		Err:      errw,
 		CS:       errCS,
@@ -570,6 +572,7 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 	})
 	var installed []string
 	seen := map[string]string{} // dest path -> repo path that produced it
+	missingApplyTo := 0         // installed files with no applyTo frontmatter value
 	for _, f := range files {
 		rel := s.DestPath(f.Rel)
 		if rel == "" {
@@ -586,7 +589,17 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 			o.err = err
 			return o
 		}
+		if !hasApplyTo(f.Content) {
+			missingApplyTo++
+		}
 		installed = append(installed, rel)
+	}
+	// Files without an applyTo value are copied verbatim like any other, but VS
+	// Code won't auto-apply a user-level file that lacks one - so flag them once,
+	// per source, with the fix.
+	if missingApplyTo > 0 {
+		warnings = append(warnings, fmt.Sprintf("%s  %d of %d installed %s no applyTo value; VS Code won't auto-apply %s (add e.g. applyTo: '**').",
+			s.Repo, missingApplyTo, len(installed), have(missingApplyTo), them(missingApplyTo)))
 	}
 	// Prune this source's files that are no longer produced.
 	if hasPrev {
@@ -831,6 +844,22 @@ func pluralFiles(n int) string {
 		return "pulled 1 file"
 	}
 	return fmt.Sprintf("pulled %d files", n)
+}
+
+// have renders "file has"/"files have" for the applyTo warning's subject.
+func have(n int) string {
+	if n == 1 {
+		return "file has"
+	}
+	return "files have"
+}
+
+// them renders the matching object pronoun for the applyTo warning.
+func them(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
 }
 
 // isOurs reports whether a path (relative to the install dir) is one we manage,

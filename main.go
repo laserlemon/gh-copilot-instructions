@@ -52,7 +52,7 @@ func rootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(addCmd(), pullCmd(), listCmd(), removeCmd())
+	root.AddCommand(addCmd(), pullCmd(), listCmd(), removeCmd(), autoPullCmd())
 	applyGHStyle(root)
 	return root
 }
@@ -193,6 +193,74 @@ func removeCmd() *cobra.Command {
 	}
 	c.Flags().BoolVar(&all, "all", false, "Remove every source, all installed files, and config")
 	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
+	return c
+}
+
+func autoPullCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "auto-pull [enable | disable | status]",
+		Short: "Turn scheduled background pulling on or off",
+		Long: "Enable or disable a recurring background pull, so this machine keeps its\n" +
+			"instructions fresh with no manual step. When enabled, macOS (launchd) runs\n" +
+			"`gh copilot-instructions pull` on a cadence. macOS only for now; other\n" +
+			"platforms print how to schedule it themselves.\n\n" +
+			"Run with no argument (or `status`) to see the current state.",
+		Example: heredoc(`
+			# Show whether auto-pull is on and how often it runs
+			$ gh copilot-instructions auto-pull
+
+			# Turn it on with the default daily cadence
+			$ gh copilot-instructions auto-pull enable
+
+			# Turn it on every 3 hours (or every 2 days, every week, ...)
+			$ gh copilot-instructions auto-pull enable --every 3h
+
+			# Turn it off
+			$ gh copilot-instructions auto-pull disable`),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return newApp().AutoPullStatus(asJSON)
+		},
+	}
+	c.PersistentFlags().BoolVar(&asJSON, "json", false, "Output JSON")
+
+	var every string
+	enable := &cobra.Command{
+		Use:   "enable",
+		Short: "Turn on scheduled background pulling",
+		Long: "Install a recurring job that runs `gh copilot-instructions pull`. Re-run\n" +
+			"with a different --every to change the cadence. macOS only for now.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cadence, err := gci.ParseCadence(every)
+			if err != nil {
+				return err
+			}
+			return newApp().AutoPullEnable(cadence, asJSON)
+		},
+	}
+	enable.Flags().StringVar(&every, "every", gci.DefaultEvery, "Cadence: hour, day, or week (with h/d/w shorthands and a count, e.g. 3h, 2d, 1w)")
+
+	disable := &cobra.Command{
+		Use:   "disable",
+		Short: "Turn off scheduled background pulling",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return newApp().AutoPullDisable(asJSON)
+		},
+	}
+
+	status := &cobra.Command{
+		Use:   "status",
+		Short: "Show whether auto-pull is on and its cadence",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return newApp().AutoPullStatus(asJSON)
+		},
+	}
+
+	c.AddCommand(enable, disable, status)
 	return c
 }
 

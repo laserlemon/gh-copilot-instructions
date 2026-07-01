@@ -750,3 +750,47 @@ func TestPullJSONReturnsFullListWithUpdated(t *testing.T) {
 		t.Errorf("got %v, want o/one UPDATED + o/two PENDING", got)
 	}
 }
+
+func TestPullWarnsMissingApplyTo(t *testing.T) {
+	src, _ := ParseSpec("o/r")
+	id := src.ID()
+	f := &fakeFetcher{
+		sha: map[string]string{id: "sha1111111111111111111111111111111111111"},
+		files: map[string][]FetchedFile{id: {
+			{Rel: "with.instructions.md", Content: []byte("---\napplyTo: '**'\n---\nok")},
+			{Rel: "without.instructions.md", Content: []byte("no frontmatter here")},
+		}},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	msg := a.Err.(*bytes.Buffer).String()
+	if !strings.Contains(msg, "applyTo") || !strings.Contains(msg, "1 of 2") {
+		t.Fatalf("expected an applyTo warning mentioning 1 of 2, got: %q", msg)
+	}
+}
+
+func TestPullNoApplyToWarningWhenAllTagged(t *testing.T) {
+	src, _ := ParseSpec("o/r2")
+	id := src.ID()
+	f := &fakeFetcher{
+		sha: map[string]string{id: "sha2222222222222222222222222222222222222"},
+		files: map[string][]FetchedFile{id: {
+			{Rel: "a.instructions.md", Content: []byte("---\napplyTo: '**'\n---\na")},
+		}},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	if msg := a.Err.(*bytes.Buffer).String(); strings.Contains(msg, "applyTo") {
+		t.Fatalf("did not expect an applyTo warning, got: %q", msg)
+	}
+}

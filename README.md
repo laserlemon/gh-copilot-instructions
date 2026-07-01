@@ -30,6 +30,9 @@ gh copilot-instructions pull [<id | owner/repo>]                    # pull all c
 gh copilot-instructions list [--raw]                                # show sources and their pulled state
 gh copilot-instructions remove <id | owner/repo>                    # remove one source and prune its files
 gh copilot-instructions remove --all                                # remove every source, all installed files, and config
+gh copilot-instructions auto-pull [status]                          # show whether scheduled pulling is on
+gh copilot-instructions auto-pull enable [--every hour|day|week|Nh|Nd|Nw]  # schedule background pulls (default: day)
+gh copilot-instructions auto-pull disable                           # stop scheduled background pulls
 ```
 
 Every command accepts `--json` for machine-readable output. On a terminal the JSON is pretty-printed
@@ -47,6 +50,9 @@ and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly i
 - **`remove`** / **`remove --all`** only ever delete files this tool installed (they live under the
   `~/.copilot/instructions/gh-copilot-instructions/` directory) — your own hand-written instruction
   files are never touched.
+- **`auto-pull`** turns scheduled background pulling on or off (`enable` / `disable` / `status`).
+  See [Keep it fresh with auto-pull](#keep-it-fresh-with-auto-pull).
+
 
 ## Sources & configuration
 
@@ -103,11 +109,46 @@ Other variables: `GH_COPILOT_INSTRUCTIONS_TOKEN` (fallback token), `GH_COPILOT_I
 - **VS Code / desktop app:** nothing to configure — they read `~/.copilot/instructions/`
   automatically. Reload the window / restart the app to pick up changes.
 
+## Keep it fresh with auto-pull
+
+Instead of re-running `pull` by hand, let your machine do it on a schedule:
+
+```bash
+gh copilot-instructions auto-pull enable           # daily (the default)
+gh copilot-instructions auto-pull enable --every 3h   # every 3 hours
+gh copilot-instructions auto-pull enable --every 1w   # weekly
+gh copilot-instructions auto-pull                  # status
+gh copilot-instructions auto-pull disable          # stop
+```
+
+`--every` takes a base unit — `hour`, `day`, or `week` (shorthands `h`, `d`, `w`) — with an optional
+count, so `h`, `3h`, `day`, `2d`, and `1w` are all valid. The default is `day`, and the clock starts
+when you run `enable`.
+
+When enabled, a recurring job runs `gh copilot-instructions pull` at that cadence, using the absolute
+path to `gh` so it works regardless of the scheduler's `PATH`. Output is logged to
+`~/.local/state/gh-copilot-instructions/auto-pull.log`.
+
+- **macOS** is supported today, via a **launchd** LaunchAgent
+  (`~/Library/LaunchAgents/com.github.laserlemon.gh-copilot-instructions.plist`).
+- **Linux / Windows** aren't wired up yet — the command tells you so and points you at scheduling
+  `gh copilot-instructions pull` yourself (cron, Task Scheduler).
+
+`auto-pull status` reconciles the recorded setting against the actual launchd job and warns if they've
+drifted apart (for example, if the agent was removed by hand). Pulls run non-interactively, so the
+scheduled job needs your `gh` auth to be readable without a prompt — check the log if a source stops
+updating.
+
 ## A note on VS Code and `applyTo`
 
 This tool copies your files **verbatim** — it never reads or edits `applyTo` or any other
 frontmatter. VS Code only auto-applies a user-level `*.instructions.md` file when the file itself
 declares an `applyTo` key, so include one in your source files (for example `applyTo: '**'`).
+
+As a safety net, `add` and `pull` **warn** when a pulled source installs files with no `applyTo`
+value, telling you exactly how many and how to fix them — so a file that would silently never apply
+in VS Code doesn't slip by unnoticed. The files are still installed unchanged; only the warning is
+new.
 
 ## How files are installed
 
