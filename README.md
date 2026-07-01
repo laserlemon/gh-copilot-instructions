@@ -30,9 +30,9 @@ gh copilot-instructions pull [<id | owner/repo>]                    # pull all c
 gh copilot-instructions list [--raw]                                # show sources and their pulled state
 gh copilot-instructions remove <id | owner/repo>                    # remove one source and prune its files
 gh copilot-instructions remove --all                                # remove every source, all installed files, and config
-gh copilot-instructions auto-pull [status]                          # show whether scheduled pulling is on
+gh copilot-instructions auto-pull [status]                          # show whether scheduled pulling is enabled
 gh copilot-instructions auto-pull enable [--every hour|day|week|Nh|Nd|Nw]  # schedule background pulls (default: day)
-gh copilot-instructions auto-pull disable                           # stop scheduled background pulls
+gh copilot-instructions auto-pull disable                           # disable scheduled background pulls
 ```
 
 Every command accepts `--json` for machine-readable output. On a terminal the JSON is pretty-printed
@@ -50,7 +50,7 @@ and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly i
 - **`remove`** / **`remove --all`** only ever delete files this tool installed (they live under the
   `~/.copilot/instructions/gh-copilot-instructions/` directory) — your own hand-written instruction
   files are never touched.
-- **`auto-pull`** turns scheduled background pulling on or off (`enable` / `disable` / `status`).
+- **`auto-pull`** enables or disables scheduled background pulling (`enable` / `disable` / `status`).
   See [Keep it fresh with auto-pull](#keep-it-fresh-with-auto-pull).
 
 
@@ -118,7 +118,7 @@ gh copilot-instructions auto-pull enable           # daily (the default)
 gh copilot-instructions auto-pull enable --every 3h   # every 3 hours
 gh copilot-instructions auto-pull enable --every 1w   # weekly
 gh copilot-instructions auto-pull                  # status
-gh copilot-instructions auto-pull disable          # stop
+gh copilot-instructions auto-pull disable          # disable
 ```
 
 `--every` takes a base unit — `hour`, `day`, or `week` (shorthands `h`, `d`, `w`) — with an optional

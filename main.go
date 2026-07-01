@@ -200,23 +200,23 @@ func autoPullCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "auto-pull [enable | disable | status]",
-		Short: "Turn scheduled background pulling on or off",
+		Short: "Enable or disable scheduled background pulling",
 		Long: "Enable or disable a recurring background pull, so this machine keeps its\n" +
 			"instructions fresh with no manual step. When enabled, macOS (launchd) runs\n" +
 			"`gh copilot-instructions pull` on a cadence. macOS only for now; other\n" +
 			"platforms print how to schedule it themselves.\n\n" +
 			"Run with no argument (or `status`) to see the current state.",
 		Example: heredoc(`
-			# Show whether auto-pull is on and how often it runs
+			# Show whether auto-pull is enabled and how often it runs
 			$ gh copilot-instructions auto-pull
 
-			# Turn it on with the default daily cadence
+			# Enable it with the default daily cadence
 			$ gh copilot-instructions auto-pull enable
 
-			# Turn it on every 3 hours (or every 2 days, every week, ...)
+			# Enable it every 3 hours (or every 2 days, every week, ...)
 			$ gh copilot-instructions auto-pull enable --every 3h
 
-			# Turn it off
+			# Disable it
 			$ gh copilot-instructions auto-pull disable`),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -228,7 +228,7 @@ func autoPullCmd() *cobra.Command {
 	var every string
 	enable := &cobra.Command{
 		Use:   "enable",
-		Short: "Turn on scheduled background pulling",
+		Short: "Enable scheduled background pulling",
 		Long: "Install a recurring job that runs `gh copilot-instructions pull`. Re-run\n" +
 			"with a different --every to change the cadence. macOS only for now.",
 		Args: cobra.NoArgs,
@@ -244,7 +244,7 @@ func autoPullCmd() *cobra.Command {
 
 	disable := &cobra.Command{
 		Use:   "disable",
-		Short: "Turn off scheduled background pulling",
+		Short: "Disable scheduled background pulling",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return newApp().AutoPullDisable(asJSON)
@@ -253,7 +253,7 @@ func autoPullCmd() *cobra.Command {
 
 	status := &cobra.Command{
 		Use:   "status",
-		Short: "Show whether auto-pull is on and its cadence",
+		Short: "Show whether auto-pull is enabled and its cadence",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return newApp().AutoPullStatus(asJSON)

@@ -131,7 +131,7 @@ func TestAutoPullEnableDisableStatus(t *testing.T) {
 	if st.AutoPull == nil || !st.AutoPull.Enabled || st.AutoPull.Cadence != "3h" {
 		t.Fatalf("state not recorded: %+v", st.AutoPull)
 	}
-	if !strings.Contains(errBuf(a), "is on") || !strings.Contains(errBuf(a), "every 3 hours") {
+	if !strings.Contains(errBuf(a), "is enabled") || !strings.Contains(errBuf(a), "every 3 hours") {
 		t.Fatalf("enable message: %q", errBuf(a))
 	}
 
@@ -140,7 +140,7 @@ func TestAutoPullEnableDisableStatus(t *testing.T) {
 	if err := a.AutoPullStatus(false); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(errBuf(a), "on") || strings.Contains(errBuf(a), "missing") {
+	if !strings.Contains(errBuf(a), "is enabled") || strings.Contains(errBuf(a), "missing") {
 		t.Fatalf("status output: %q", errBuf(a))
 	}
 
@@ -160,7 +160,7 @@ func TestAutoPullEnableDisableStatus(t *testing.T) {
 	if fs.enabled || fs.installed {
 		t.Fatalf("scheduler still enabled: %+v", fs)
 	}
-	if !strings.Contains(errBuf(a), "is off") {
+	if !strings.Contains(errBuf(a), "is disabled") {
 		t.Fatalf("disable message: %q", errBuf(a))
 	}
 	st, _ = a.Paths.LoadState()
