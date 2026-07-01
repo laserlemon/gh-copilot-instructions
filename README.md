@@ -117,7 +117,7 @@ Matched files are written under a single namespace directory, mirroring each sou
 ~/.copilot/instructions/gh-copilot-instructions/<id>/<repo-relative-path>
 ```
 
-- `<id>` is the source's deterministic id (`sha256(owner/repo + ref + path)`, first 8 hex chars), so
+- `<id>` is the source's deterministic id (`sha256(owner/repo + ref + path)`, first 8 base36 chars), so
   every source gets its own subtree for clean pruning and removal.
 - The repo-relative directory structure is preserved, and content is copied **verbatim**. Each file
   name is normalized to a clean `*.instructions.md` (drop a trailing `.md`, then a trailing

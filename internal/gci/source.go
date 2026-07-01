@@ -2,8 +2,8 @@ package gci
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"math/big"
 	"strings"
 )
 
@@ -153,12 +153,20 @@ func (s Source) Name() string {
 	return s.Repo
 }
 
-// ID is the deterministic identity of a source: the first 8 hex chars of
+// ID is the deterministic identity of a source: the first 8 base36 chars of
 // sha256("repo\nref\npath"). Stable across machines and re-pulls; unique per
-// distinct repo+ref+path; computable offline.
+// distinct repo+ref+path; computable offline. Base36 (lowercase 0-9a-z) keeps
+// ids from looking like commit SHAs and stays stable on case-insensitive file
+// systems, while packing more entropy per character than hex.
 func (s Source) ID() string {
 	sum := sha256.Sum256([]byte(s.Repo + "\n" + s.Ref + "\n" + s.Path))
-	return hex.EncodeToString(sum[:])[:8]
+	// A 256-bit value is at most 50 base36 digits; left-pad so the id always
+	// has 8 chars even when the leading digits are zero.
+	b36 := new(big.Int).SetBytes(sum[:]).Text(36)
+	if len(b36) < 8 {
+		b36 = strings.Repeat("0", 8-len(b36)) + b36
+	}
+	return b36[:8]
 }
 
 // Spec renders the canonical "owner/repo[@ref][:path]" (no token).
