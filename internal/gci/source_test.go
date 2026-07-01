@@ -61,6 +61,13 @@ func TestIDDeterministicAndUnique(t *testing.T) {
 	if len(a.ID()) != 8 {
 		t.Errorf("id length = %d, want 8", len(a.ID()))
 	}
+	// IDs are base36 (lowercase 0-9a-z), not hex, so they don't read like
+	// commit SHAs and stay stable on case-insensitive file systems.
+	for _, r := range a.ID() {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'z')) {
+			t.Errorf("id %q has non-base36 char %q", a.ID(), r)
+		}
+	}
 	seen := map[string]string{}
 	for _, spec := range []string{"o/r", "o/r@main", "o/r:p", "o/r2", "o2/r", "o/r@main:p"} {
 		s, _ := ParseSpec(spec)
