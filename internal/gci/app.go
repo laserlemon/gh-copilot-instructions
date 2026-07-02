@@ -432,7 +432,10 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 			o := a.pullSource(srcs[i], prevs[p], hasPrev[p], onProgress)
 			final := o.row
 			if o.err != nil {
-				final = a.rowForState(srcs[i], prevs[p], hasPrev[p])
+				// Show the failure using the just-recorded state (which carries
+				// this attempt's PulledAt), not the previous one - so a brand-new
+				// failed source shows its attempt time, not a null "~".
+				final = a.rowForState(srcs[i], o.newState, true)
 				final.State = StateFailed
 			}
 			lr.mu.Lock()
