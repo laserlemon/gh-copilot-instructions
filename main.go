@@ -145,8 +145,8 @@ func listCmd() *cobra.Command {
 	var asJSON, raw bool
 	c := &cobra.Command{
 		Use:   "list",
-		Short: "List configured sources and their pulled state",
-		Long: "List configured sources and their pulled state.\n\n" +
+		Short: "List all sources and their states",
+		Long: "List all sources and their states.\n\n" +
 			"Use --raw to print the sources in config-file format (one per line,\n" +
 			"including any inline tokens) - ready to paste into the multiline\n" +
 			"GH_COPILOT_INSTRUCTIONS Codespaces secret.",
