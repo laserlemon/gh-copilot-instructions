@@ -34,12 +34,14 @@ func main() {
 }
 
 func rootCmd() *cobra.Command {
+	var asJSON, raw bool
 	root := &cobra.Command{
-		Use:   "copilot-instructions <command>",
+		Use:   "copilot-instructions [<command>]",
 		Short: "Sync your Copilot custom instructions to every coding surface",
 		Long: "Pull your Copilot custom instructions from one or more repos into\n" +
 			"~/.copilot/instructions/, where Copilot CLI, VS Code, and the GitHub\n" +
-			"Copilot desktop app all read them automatically - no per-repo setup.",
+			"Copilot desktop app all read them automatically - no per-repo setup.\n\n" +
+			"Run with no command to list your configured sources (like `list`).",
 		Example: heredoc(`
 			# Add your team's shared instructions and pull them
 			$ gh copilot-instructions add github/team-instructions
@@ -48,13 +50,29 @@ func rootCmd() *cobra.Command {
 			$ gh copilot-instructions pull
 
 			# See what's configured and installed
-			$ gh copilot-instructions list`),
+			$ gh copilot-instructions`),
+		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// With no subcommand, default to `list`.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runList(asJSON, raw)
+		},
 	}
+	root.Flags().BoolVar(&raw, "raw", false, "Output config-file lines to paste into a Codespaces secret")
+	root.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	root.AddCommand(addCmd(), pullCmd(), listCmd(), removeCmd(), autoPullCmd())
 	applyGHStyle(root)
 	return root
+}
+
+// runList renders the configured sources (the `list` command, and the default
+// action when no subcommand is given).
+func runList(asJSON, raw bool) error {
+	if asJSON && raw {
+		return fmt.Errorf("cannot use --json and --raw together")
+	}
+	return newApp().RenderList(asJSON, raw)
 }
 
 func newApp() *gci.App { return gci.New(os.Stdout, os.Stderr) }
@@ -151,10 +169,7 @@ func listCmd() *cobra.Command {
 			$ gh copilot-instructions list --json | jq -r '.[].repo'`),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if asJSON && raw {
-				return fmt.Errorf("cannot use --json and --raw together")
-			}
-			return newApp().RenderList(asJSON, raw)
+			return runList(asJSON, raw)
 		},
 	}
 	c.Flags().BoolVar(&raw, "raw", false, "Output config-file lines to paste into a Codespaces secret")

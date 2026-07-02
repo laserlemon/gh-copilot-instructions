@@ -24,6 +24,7 @@ or restart the desktop app to pick up changes).
 ## Commands
 
 ```
+gh copilot-instructions                                             # (no command) list sources — same as `list`
 gh copilot-instructions add <owner/repo[@ref][:path]> [--token T]   # add a source, then pull
 gh copilot-instructions add --repo R [--ref REF] [--path P] [--token T]
 gh copilot-instructions pull [<id | owner/repo>]                    # pull all configured sources, or just one
