@@ -26,7 +26,7 @@ func main() {
 }
 
 func rootCmd() *cobra.Command {
-	var asJSON, raw bool
+	var asJSON bool
 	root := &cobra.Command{
 		Use:   "copilot-instructions [<command>]",
 		Short: "Sync your Copilot custom instructions to every coding surface",
@@ -46,12 +46,12 @@ func rootCmd() *cobra.Command {
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		// With no subcommand, default to `list`.
+		// With no subcommand, default to `list`. --raw is list-specific, so it's
+		// not offered here; use `list --raw` for the config-file format.
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runList(asJSON, raw)
+			return runList(asJSON, false)
 		},
 	}
-	root.Flags().BoolVar(&raw, "raw", false, "Output config-file lines to paste into a Codespaces secret")
 	root.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	root.AddCommand(addCmd(), pullCmd(), listCmd(), removeCmd(), autoPullCmd())
 	applyGHStyle(root)
