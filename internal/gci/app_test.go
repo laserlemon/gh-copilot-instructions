@@ -794,3 +794,72 @@ func TestPullNoApplyToWarningWhenAllTagged(t *testing.T) {
 		t.Fatalf("did not expect an applyTo warning, got: %q", msg)
 	}
 }
+
+func TestRemoveBySlugAndVariant(t *testing.T) {
+	def, _ := ParseSpec("o/one")
+	v2, _ := ParseSpec("o/one@v2")
+	f := &fakeFetcher{
+		sha: map[string]string{def.ID(): "d100000000000000000000000000000000000000", v2.ID(): "v200000000000000000000000000000000000000"},
+		files: map[string][]FetchedFile{
+			def.ID(): {{Rel: "a.instructions.md", Content: []byte("---\napplyTo: '**'\n---\na")}},
+			v2.ID():  {{Rel: "b.instructions.md", Content: []byte("---\napplyTo: '**'\n---\nb")}},
+		},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(def); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Paths.AddSource(v2); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// A bare owner/repo targets only the default variant (parity with add), not @v2.
+	if err := a.Remove("o/one", false); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := a.Paths.LoadState()
+	if _, ok := st.Sources[def.ID()]; ok {
+		t.Fatal("default variant should be removed by owner/repo")
+	}
+	if _, ok := st.Sources[v2.ID()]; !ok {
+		t.Fatal("the @v2 variant should remain (not a fuzzy repo match)")
+	}
+
+	// The @v2 variant is removable by its exact spec or its slug.
+	if err := a.Remove(v2.ID(), false); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = a.Paths.LoadState()
+	if _, ok := st.Sources[v2.ID()]; ok {
+		t.Fatal("@v2 should be removed by slug")
+	}
+	srcs, _, _ := a.Paths.LoadSources()
+	if len(srcs) != 0 {
+		t.Fatalf("config should be empty after removing both, got %d", len(srcs))
+	}
+}
+
+func TestRemoveByFullSpec(t *testing.T) {
+	v2, _ := ParseSpec("o/one@v2:sub")
+	f := &fakeFetcher{
+		sha:   map[string]string{v2.ID(): "v200000000000000000000000000000000000000"},
+		files: map[string][]FetchedFile{v2.ID(): {{Rel: "sub/b.instructions.md", Content: []byte("---\napplyTo: '**'\n---\nb")}}},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(v2); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Remove("o/one@v2:sub", false); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := a.Paths.LoadState()
+	if _, ok := st.Sources[v2.ID()]; ok {
+		t.Fatal("source should be removed by its full spec")
+	}
+}

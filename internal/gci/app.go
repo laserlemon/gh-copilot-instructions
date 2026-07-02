@@ -692,11 +692,12 @@ func (a *App) removeEmptyParents(rel string) {
 	}
 }
 
-// Remove deletes sources matching idOrRepo from the config file and prunes their
-// installed files (by id), regardless of whether the config came from file/env.
-// With asJSON it emits a JSON array of the remaining sources (like `list --json`).
-func (a *App) Remove(idOrRepo string, asJSON bool) error {
-	removedFromFile, err := a.Paths.RemoveSource(idOrRepo)
+// Remove deletes the source identified by target - its slug, or an add-style
+// spec/URL that resolves to it - from the config file and prunes its installed
+// files. With asJSON it emits a JSON array of the remaining sources (like
+// `list --json`).
+func (a *App) Remove(target string, asJSON bool) error {
+	removedFromFile, err := a.Paths.RemoveSource(target)
 	if err != nil {
 		return err
 	}
@@ -704,9 +705,10 @@ func (a *App) Remove(idOrRepo string, asJSON bool) error {
 	if err != nil {
 		return err
 	}
+	specID, specOK := resolveTarget(target)
 	var removedIDs []string
 	for id, ss := range st.Sources {
-		if id == idOrRepo || ss.Repo == idOrRepo {
+		if id == target || (specOK && id == specID) {
 			a.prune(ss.Files, nil)
 			os.RemoveAll(filepath.Join(a.Paths.InstallDir, FileDir, id))
 			delete(st.Sources, id)
@@ -720,10 +722,10 @@ func (a *App) Remove(idOrRepo string, asJSON bool) error {
 		return a.renderRemainingJSON()
 	}
 	if len(removedFromFile) == 0 && len(removedIDs) == 0 {
-		a.dim("No source matched %q.", idOrRepo)
+		a.dim("No source matched %q.", target)
 		return nil
 	}
-	a.success("Removed %s", a.cs().Bold(idOrRepo))
+	a.success("Removed %s", a.cs().Bold(target))
 	if EnvSet() && len(removedFromFile) > 0 {
 		a.blank()
 		a.note("%s is set and overrides the config file.", EnvSources)

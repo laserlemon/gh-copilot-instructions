@@ -178,34 +178,60 @@ func listCmd() *cobra.Command {
 }
 
 func removeCmd() *cobra.Command {
+	var repo, ref, path string
 	var all, asJSON bool
 	c := &cobra.Command{
-		Use:   "remove [<id | owner/repo>]",
-		Short: "Remove one source (and prune its files), or --all",
-		Long: "Remove one source (and prune the files it installed), or use --all to\n" +
-			"remove every source, all installed files, and the local config.\n\n" +
+		Use:   "remove [<slug | owner/repo[@ref][:path]>]",
+		Short: "Remove one source and prune its files, or --all",
+		Long: "Remove one configured source and prune the files it installed, or use\n" +
+			"--all to remove every source, all installed files, and the local config.\n\n" +
+			"Identify the source the way you added it: an owner/repo[@ref][:path] spec,\n" +
+			"a GitHub blob URL, or the equivalent --repo/--ref/--path flags. You can\n" +
+			"also pass a source's slug from the SLUG column of the list output.\n\n" +
 			"With --json, the remaining sources are reported (like list --json).",
 		Example: heredoc(`
-			# Remove one source and prune its files
+			# Remove a source by owner/repo
 			$ gh copilot-instructions remove github/team-instructions
+
+			# Remove a specific ref/path variant (the way it was added)
+			$ gh copilot-instructions remove github/team-instructions@main:instructions
+
+			# Remove by slug, from the SLUG column of the list output
+			$ gh copilot-instructions remove a1b2c3d4
 
 			# Remove everything this extension installed
 			$ gh copilot-instructions remove --all`),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app := newApp()
+			spec := ""
+			if len(args) == 1 {
+				spec = args[0]
+			}
 			if all {
-				if len(args) > 0 {
-					return fmt.Errorf("--all takes no argument")
+				if spec != "" || repo != "" || ref != "" || path != "" {
+					return fmt.Errorf("--all takes no other arguments")
 				}
 				return app.RemoveAll(asJSON)
 			}
-			if len(args) != 1 {
-				return fmt.Errorf("specify an <id | owner/repo> to remove, or --all")
+			// A spec/URL or --repo/--ref/--path builds the exact source, the same
+			// way add identifies it; a bare token is treated as a slug.
+			if repo != "" || ref != "" || path != "" || strings.Contains(spec, "/") {
+				s, err := buildRemoveTarget(spec, repo, ref, path)
+				if err != nil {
+					return err
+				}
+				return app.Remove(s.Spec(), asJSON)
 			}
-			return app.Remove(args[0], asJSON)
+			if spec == "" {
+				return fmt.Errorf("specify a slug, owner/repo[@ref][:path], or a GitHub URL to remove, or use --all")
+			}
+			return app.Remove(spec, asJSON)
 		},
 	}
+	c.Flags().StringVar(&repo, "repo", "", "Source repository (`owner/repo`)")
+	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
+	c.Flags().StringVar(&path, "path", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
 	c.Flags().BoolVar(&all, "all", false, "Remove every source, all installed files, and config")
 	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	return c
@@ -296,16 +322,40 @@ func heredoc(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// buildSource combines an optional positional spec with flag overrides.
+// buildSource combines an optional positional spec with flag overrides. It uses
+// ResolveSpec so an ambiguous GitHub blob URL (a slashed branch name) is
+// disambiguated against the API, matching how add stores the source.
 func buildSource(spec, repo, ref, path, token string) (gci.Source, error) {
-	var s gci.Source
+	var base gci.Source
 	if spec != "" {
 		parsed, err := newApp().ResolveSpec(spec)
 		if err != nil {
-			return s, err
+			return base, err
 		}
-		s = parsed
+		base = parsed
 	}
+	return mergeSource(base, repo, ref, path, token)
+}
+
+// buildRemoveTarget builds the source to remove from an optional spec plus flag
+// overrides. Unlike buildSource it resolves offline (ParseSpec), because remove
+// only needs to identify an already-configured source and must never require the
+// network; the slug is the escape hatch for the rare slashed-ref blob URL.
+func buildRemoveTarget(spec, repo, ref, path string) (gci.Source, error) {
+	var base gci.Source
+	if spec != "" {
+		parsed, err := gci.ParseSpec(spec)
+		if err != nil {
+			return base, err
+		}
+		base = parsed
+	}
+	return mergeSource(base, repo, ref, path, "")
+}
+
+// mergeSource applies flag overrides onto a parsed base source and validates it.
+func mergeSource(base gci.Source, repo, ref, path, token string) (gci.Source, error) {
+	s := base
 	if repo != "" {
 		s.Repo = repo
 	}
