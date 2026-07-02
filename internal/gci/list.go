@@ -48,9 +48,21 @@ func (a *App) RenderList(asJSON, raw bool) error {
 		a.dim("No sources configured (%s).", origin)
 		a.blank()
 		a.dim("Add a source: gh copilot-instructions add <owner/repo>")
+		if isTTY {
+			a.dim("See all commands: gh copilot-instructions --help")
+		}
 		return nil
 	}
-	return a.renderTable(a.Out, staticViews(rows), isTTY, w, cs)
+	if err := a.renderTable(a.Out, staticViews(rows), isTTY, w, cs); err != nil {
+		return err
+	}
+	// On a terminal, follow the table with a gray secondary hint pointing at the
+	// full command list. Suppressed when piped so scripts get clean TSV only.
+	if isTTY {
+		a.blank()
+		a.dim("See all commands: gh copilot-instructions --help")
+	}
+	return nil
 }
 
 // rowView is one row's render input. By default a row renders in full color; the
