@@ -226,7 +226,7 @@ func (unsupportedScheduler) Supported() bool          { return false }
 func (unsupportedScheduler) Installed() (bool, error) { return false, nil }
 
 func (unsupportedScheduler) unsupported() error {
-	return fmt.Errorf("auto-pull currently supports macOS only; on %s, schedule `gh copilot-instructions pull` with your own scheduler (e.g. cron or Task Scheduler)", runtime.GOOS)
+	return fmt.Errorf("auto-pull is macOS-only for now. On %s, schedule gh copilot-instructions pull yourself with cron or Task Scheduler", runtime.GOOS)
 }
 
 func (u unsupportedScheduler) Enable(Cadence) error { return u.unsupported() }
@@ -329,9 +329,9 @@ func (a *App) printAutoPull(st *State) {
 	cs := a.cs()
 	sc := a.sched()
 	if !sc.Supported() {
-		a.warn("Auto-pull isn't supported on %s yet - it currently requires macOS.", sc.Kind())
+		a.warn("Auto-pull isn't supported on %s yet (macOS only for now).", sc.Kind())
 		a.blank()
-		a.dim("Schedule `gh copilot-instructions pull` with your own scheduler (cron, Task Scheduler).")
+		a.dim("Schedule it yourself with cron or Task Scheduler: gh copilot-instructions pull")
 		return
 	}
 	enabled := st.AutoPull != nil && st.AutoPull.Enabled
@@ -340,10 +340,10 @@ func (a *App) printAutoPull(st *State) {
 		a.msg("%s Auto-pull is enabled to pull %s.", cs.Green("✓"), cadenceFromState(st).Human())
 		a.blank()
 		if ierr == nil && !installed {
-			a.note("The scheduled job is missing; re-run `gh copilot-instructions auto-pull enable` to reinstall it.")
+			a.note("The scheduled job is missing. Reinstall it: gh copilot-instructions auto-pull enable")
 		}
 		if srcs, origin, _ := a.Paths.LoadSources(); origin == OriginNone || len(srcs) == 0 {
-			a.note("No sources are configured yet; add one with `gh copilot-instructions add <owner/repo[:path]>`.")
+			a.note("No sources are configured yet. Add a source: gh copilot-instructions add <owner/repo>")
 		}
 		a.dim("Runs: gh copilot-instructions pull")
 		a.dim("Log:  %s", filepath.Join(a.Paths.StateDir, "auto-pull.log"))
@@ -352,7 +352,7 @@ func (a *App) printAutoPull(st *State) {
 	a.msg("%s Auto-pull is disabled.", cs.Red("✗"))
 	a.blank()
 	if ierr == nil && installed {
-		a.note("A scheduled job is still installed; run `gh copilot-instructions auto-pull disable` to remove it.")
+		a.note("A scheduled job is still installed. Remove it: gh copilot-instructions auto-pull disable")
 	}
 	// The enable command stays the primary (default) foreground so it stands out
 	// as the thing to run; only its "Enable it with:" label is muted.

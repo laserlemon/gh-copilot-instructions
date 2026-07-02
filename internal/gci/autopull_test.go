@@ -195,7 +195,7 @@ func TestAutoPullUnsupported(t *testing.T) {
 	if err := a.AutoPullStatus(false); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(errBuf(a), "requires macOS") {
+	if !strings.Contains(errBuf(a), "macOS only") {
 		t.Fatalf("expected unsupported message: %q", errBuf(a))
 	}
 }

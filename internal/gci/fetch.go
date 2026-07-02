@@ -131,7 +131,7 @@ func (Fetcher) Fetch(s Source, onProgress func(sha string, files int)) (string, 
 		return "", nil, err
 	}
 	if tree.Truncated {
-		return "", nil, fmt.Errorf("%s: tree too large (truncated); narrow the path", s.Repo)
+		return "", nil, fmt.Errorf("%s: tree too large (truncated), narrow the path", s.Repo)
 	}
 	var files []FetchedFile
 	for _, e := range tree.Tree {

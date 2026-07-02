@@ -203,9 +203,9 @@ func autoPullCmd() *cobra.Command {
 		Short: "Enable or disable scheduled background pulling",
 		Long: "Enable or disable a recurring background pull, so this machine keeps its\n" +
 			"instructions fresh with no manual step. When enabled, macOS (launchd) runs\n" +
-			"`gh copilot-instructions pull` on a cadence. macOS only for now; other\n" +
+			"gh copilot-instructions pull on a cadence. macOS only for now. Other\n" +
 			"platforms print how to schedule it themselves.\n\n" +
-			"Run with no argument (or `status`) to see the current state.",
+			"Run with no argument (or status) to see the current state.",
 		Example: heredoc(`
 			# Show whether auto-pull is enabled and how often it runs
 			$ gh copilot-instructions auto-pull
@@ -229,7 +229,7 @@ func autoPullCmd() *cobra.Command {
 	enable := &cobra.Command{
 		Use:   "enable",
 		Short: "Enable scheduled background pulling",
-		Long: "Install a recurring job that runs `gh copilot-instructions pull`. Re-run\n" +
+		Long: "Install a recurring job that runs gh copilot-instructions pull. Re-run\n" +
 			"with a different --every to change the cadence. macOS only for now.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -304,7 +304,7 @@ func buildSource(spec, repo, ref, path, token string) (gci.Source, error) {
 		s.Token = token
 	}
 	if s.Repo == "" {
-		return s, fmt.Errorf("a repo is required: pass owner/repo[:path] or --repo owner/repo")
+		return s, fmt.Errorf("a repo is required: pass owner/repo or --repo owner/repo")
 	}
 	if _, err := gci.ParseSpec(s.Repo); err != nil {
 		return s, err

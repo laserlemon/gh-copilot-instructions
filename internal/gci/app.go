@@ -114,7 +114,7 @@ func (a *App) Add(s Source, asJSON bool) error {
 		return err
 	}
 	if EnvSet() && !asJSON {
-		a.warn("%s is set and overrides the config file; this entry applies once that variable is unset.", EnvSources)
+		a.warn("%s is set and overrides the config file. This entry applies once that variable is unset.", EnvSources)
 	}
 	st, err := a.Paths.LoadState()
 	if err != nil {
@@ -189,7 +189,7 @@ func (a *App) Pull(filter string, asJSON bool) error {
 		}
 		a.dim("No sources configured.")
 		a.blank()
-		a.dim("Add one with: gh copilot-instructions add <owner/repo[:path]>")
+		a.dim("Add a source: gh copilot-instructions add <owner/repo>")
 		return nil
 	}
 	st, err := a.Paths.LoadState()
@@ -602,7 +602,7 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 			continue
 		}
 		if first, dup := seen[rel]; dup {
-			warnings = append(warnings, fmt.Sprintf("%s  %s and %s both map to %s; keeping %s", s.Repo, first, f.Rel, path.Base(rel), first))
+			warnings = append(warnings, fmt.Sprintf("%s  %s and %s both map to %s, keeping %s", s.Repo, first, f.Rel, path.Base(rel), first))
 			continue
 		}
 		seen[rel] = f.Rel
@@ -620,7 +620,7 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 	// Code won't auto-apply a user-level file that lacks one - so flag them once,
 	// per source, with the fix.
 	if missingApplyTo > 0 {
-		warnings = append(warnings, fmt.Sprintf("%s  %d of %d installed %s no applyTo value; VS Code won't auto-apply %s (add e.g. applyTo: '**').",
+		warnings = append(warnings, fmt.Sprintf("%s  %d of %d installed %s no applyTo value, so VS Code won't auto-apply %s (add applyTo: '**').",
 			s.Repo, missingApplyTo, len(installed), have(missingApplyTo), them(missingApplyTo)))
 	}
 	// Prune this source's files that are no longer produced.
