@@ -174,7 +174,7 @@ func removeCmd() *cobra.Command {
 	var all, asJSON bool
 	c := &cobra.Command{
 		Use:   "remove [<slug | owner/repo[@ref][:path]>]",
-		Short: "Remove one source and prune its files, or --all",
+		Short: "Remove one source and its files, or --all",
 		Long: "Remove one configured source and prune the files it installed, or use\n" +
 			"--all to remove every source, all installed files, and the local config.\n\n" +
 			"Identify the source the way you added it: an owner/repo[@ref][:path] spec,\n" +
