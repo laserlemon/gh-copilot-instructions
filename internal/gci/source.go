@@ -169,17 +169,15 @@ func (s Source) ID() string {
 	return b36[:8]
 }
 
-// resolveTarget parses a remove target as an add-style spec/URL and returns the
-// resolved source's slug (ID). ok is false when target isn't a parseable spec
-// (for example a bare slug), in which case callers match it against source slugs
-// directly. A source is thus identified for removal exactly the way add
-// identifies it, plus by its slug.
-func resolveTarget(target string) (specID string, ok bool) {
-	s, err := ParseSpec(target)
-	if err != nil {
-		return "", false
+// targetSlug normalizes a remove target to the slug it identifies. Every add-style
+// form (an owner/repo[@ref][:path] spec or a GitHub blob URL) is deterministic,
+// so it's cast to its slug via the same ID derivation add uses; a bare slug (not
+// a parseable spec) is returned unchanged. Removal then matches that one slug.
+func targetSlug(target string) string {
+	if s, err := ParseSpec(target); err == nil {
+		return s.ID()
 	}
-	return s.ID(), true
+	return target
 }
 
 // Spec renders the canonical "owner/repo[@ref][:path]" (no token).
