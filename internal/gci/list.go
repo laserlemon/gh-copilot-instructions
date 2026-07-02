@@ -45,7 +45,7 @@ func (a *App) RenderList(asJSON, raw bool) error {
 	cs := &ColorScheme{enabled: t.IsColorEnabled()}
 
 	if len(rows) == 0 {
-		a.dim("No Copilot instructions sources added.")
+		a.note("No Copilot instructions sources added.")
 		a.blank()
 		a.dim("Add a source: gh copilot-instructions add <owner/repo>")
 		if isTTY {
