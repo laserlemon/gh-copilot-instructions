@@ -320,7 +320,7 @@ func (a *App) AutoPullStatus(asJSON bool) error {
 //	✓ Auto-pull is enabled to pull every 3 hours.
 //
 //	Runs: gh copilot-instructions pull
-//	Log:  ~/.local/state/gh-copilot-instructions/auto-pull.log
+//	Log: ~/.local/state/gh-copilot-instructions/auto-pull.log
 //
 //	✗ Auto-pull is disabled.
 //
@@ -346,7 +346,7 @@ func (a *App) printAutoPull(st *State) {
 			a.note("No sources are configured yet. Add a source: gh copilot-instructions add <owner/repo>")
 		}
 		a.dim("Runs: gh copilot-instructions pull")
-		a.dim("Log:  %s", filepath.Join(a.Paths.StateDir, "auto-pull.log"))
+		a.dim("Log: %s", filepath.Join(a.Paths.StateDir, "auto-pull.log"))
 		return
 	}
 	a.msg("%s Auto-pull is disabled.", cs.Red("✗"))
