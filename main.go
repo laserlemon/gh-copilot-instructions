@@ -241,7 +241,7 @@ func autoPullCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "auto-pull [enable | disable | status]",
-		Short: "Enable or disable scheduled background pulling",
+		Short: "Toggle automatic pulling of all sources",
 		Long: "Enable or disable a recurring background pull, so this machine keeps its\n" +
 			"instructions fresh with no manual step. When enabled, macOS (launchd) runs\n" +
 			"gh copilot-instructions pull on a cadence. macOS only for now. Other\n" +
