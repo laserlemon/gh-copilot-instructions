@@ -169,15 +169,23 @@ func (s Source) ID() string {
 	return b36[:8]
 }
 
-// targetSlug normalizes a remove target to the slug it identifies. Every add-style
-// form (an owner/repo[@ref][:path] spec or a GitHub blob URL) is deterministic,
-// so it's cast to its slug via the same ID derivation add uses; a bare slug (not
-// a parseable spec) is returned unchanged. Removal then matches that one slug.
-func targetSlug(target string) string {
-	if s, err := ParseSpec(target); err == nil {
-		return s.ID()
+// targetMatches reports whether a configured source - identified by its slug id
+// and its repo/ref/path coordinates - is the one a remove target refers to. The
+// target matches if it is the source's slug, or an add-style spec/URL that
+// resolves to the same coordinates.
+//
+// A spec is matched by comparing coordinates rather than by recomputing a slug
+// from them, so remove stays correct if slugs ever become custom (non-
+// deterministic): the source is still found by its owner/repo[@ref][:path], and
+// its actual slug - custom or default - is what gets removed.
+func targetMatches(target, id, repo, ref, path string) bool {
+	if id == target {
+		return true
 	}
-	return target
+	if spec, err := ParseSpec(target); err == nil {
+		return spec.Repo == repo && spec.Ref == ref && spec.Path == path
+	}
+	return false
 }
 
 // Spec renders the canonical "owner/repo[@ref][:path]" (no token).

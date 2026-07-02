@@ -132,17 +132,16 @@ func (p Paths) AddSource(s Source) error {
 }
 
 // RemoveSource removes the source identified by target from the local file:
-// target may be a source's slug (ID) or an add-style spec/URL that resolves to
-// it (both normalize to one slug). Returns the removed sources.
+// target may be a source's slug or an add-style spec/URL that resolves to its
+// repo/ref/path. Returns the removed sources.
 func (p Paths) RemoveSource(target string) ([]Source, error) {
 	existing, err := p.readFileSources()
 	if err != nil {
 		return nil, err
 	}
-	slug := targetSlug(target)
 	var kept, removed []Source
 	for _, e := range existing {
-		if e.ID() == slug {
+		if targetMatches(target, e.ID(), e.Repo, e.Ref, e.Path) {
 			removed = append(removed, e)
 		} else {
 			kept = append(kept, e)

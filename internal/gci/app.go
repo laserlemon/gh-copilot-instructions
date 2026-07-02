@@ -705,10 +705,9 @@ func (a *App) Remove(target string, asJSON bool) error {
 	if err != nil {
 		return err
 	}
-	slug := targetSlug(target)
 	var removedIDs []string
 	for id, ss := range st.Sources {
-		if id == slug {
+		if targetMatches(target, id, ss.Repo, ss.Ref, ss.Path) {
 			a.prune(ss.Files, nil)
 			os.RemoveAll(filepath.Join(a.Paths.InstallDir, FileDir, id))
 			delete(st.Sources, id)
