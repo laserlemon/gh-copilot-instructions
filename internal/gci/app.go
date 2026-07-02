@@ -3,6 +3,7 @@ package gci
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -32,6 +33,7 @@ type fetcher interface {
 type App struct {
 	Paths Paths
 	F     fetcher
+	Sched scheduler    // OS scheduler for auto-pull (nil => resolved per-platform)
 	Out   io.Writer    // data (stdout)
 	Err   io.Writer    // progress / messages (stderr)
 	CS    *ColorScheme // color scheme for Err (stderr) messages
@@ -50,6 +52,7 @@ func New(out, errw io.Writer) *App {
 	return &App{
 		Paths:    DefaultPaths(),
 		F:        Fetcher{},
+		Sched:    newScheduler(DefaultPaths()),
 		Out:      out,
 		Err:      errw,
 		CS:       errCS,
@@ -89,6 +92,64 @@ func (a *App) dim(format string, args ...any) {
 	a.msg("%s", a.cs().Gray(fmt.Sprintf(format, args...)))
 }
 
+// blank prints an empty line. It separates primary output (the result) from the
+// secondary block (supporting detail: warnings, hints, file locations).
+func (a *App) blank() { a.msg("") }
+
+// note prints a secondary warning line: a yellow "!" status icon (kept colored,
+// because it communicates status) followed by muted gray supporting text. Use it
+// for warnings that belong in the secondary block; use warn for a warning that
+// is itself the primary result.
+func (a *App) note(format string, args ...any) {
+	a.msg("%s %s", a.cs().WarningIcon(), a.cs().Gray(fmt.Sprintf(format, args...)))
+}
+
+// ErrReported marks an error whose message the App has already presented to the
+// user (a styled ✗ failure line, plus any hint). main checks for it via
+// errors.Is and sets a non-zero exit status without printing a duplicate
+// "error:" line.
+var ErrReported = errors.New("reported")
+
+// sourceFail pairs a failed source's repo with its error, for the failure block.
+type sourceFail struct {
+	repo string
+	err  error
+}
+
+// permissionHint returns a --token nudge for a permission-style failure
+// (404/403), or "" for anything else, so a user who hit a private or missing
+// repository learns the likely fix.
+func permissionHint(err error) string {
+	m := strings.ToLower(err.Error())
+	if strings.Contains(m, "404") || strings.Contains(m, "403") ||
+		strings.Contains(m, "not found") || strings.Contains(m, "forbidden") {
+		return "If gh can't access a repository, provide a personal access token (read repository contents) with --token."
+	}
+	return ""
+}
+
+// reportFailures prints the failure block for one or more failed sources,
+// following the primary/secondary model: a blank separator (from any preceding
+// table or success lines), a red ✗ primary line per failure, then - if any looks
+// like a permissions problem - a blank and a single gray --token hint.
+func (a *App) reportFailures(fails []sourceFail) {
+	if len(fails) == 0 {
+		return
+	}
+	a.blank()
+	hint := ""
+	for _, f := range fails {
+		a.fail("%s: %v", f.repo, f.err)
+		if hint == "" {
+			hint = permissionHint(f.err)
+		}
+	}
+	if hint != "" {
+		a.blank()
+		a.dim("%s", hint)
+	}
+}
+
 // Add upserts a source into the local config file, then pulls just that source.
 // On a terminal it renders the full instructions table with that row animating
 // (spinner + live SHA/FILES + elapsed) while every other row is dimmed, settling
@@ -100,7 +161,7 @@ func (a *App) Add(s Source, asJSON bool) error {
 		return err
 	}
 	if EnvSet() && !asJSON {
-		a.warn("%s is set and overrides the config file; this entry applies once that variable is unset.", EnvSources)
+		a.warn("%s is set and overrides the config file. This entry applies once that variable is unset.", EnvSources)
 	}
 	st, err := a.Paths.LoadState()
 	if err != nil {
@@ -134,29 +195,30 @@ func (a *App) Add(s Source, asJSON bool) error {
 	if !t.IsTerminalOutput() || target < 0 {
 		prev, has := st.Sources[s.ID()]
 		out := a.pullSource(s, prev, has, nil)
-		a.printOutcome(s, out)
 		st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
 		if e := a.Paths.Save(st); e != nil {
 			return e
 		}
 		if out.err != nil {
-			return out.err
+			a.reportFailures([]sourceFail{{s.Repo, out.err}})
+			return ErrReported
 		}
-		a.printCovered(s.ID())
+		a.printOutcome(s, out)
+		a.printPullFooter(out.warnings, s.ID())
 		return nil
 	}
 
 	rows := a.rowsFor(srcs, st)
 	cs, w := a.tableEnv(t)
-	err = a.animate(rows, srcs, []int{target}, true, st, cs, w)
+	warnings, fails := a.animate(rows, srcs, []int{target}, true, st, cs, w)
 	if e := a.Paths.Save(st); e != nil {
 		return e
 	}
-	if err != nil {
-		a.fail("%s: %v", s.Repo, err)
-		return err
+	if len(fails) > 0 {
+		a.reportFailures(fails)
+		return ErrReported
 	}
-	a.printCovered(s.ID())
+	a.printPullFooter(warnings, s.ID())
 	return nil
 }
 
@@ -173,7 +235,9 @@ func (a *App) Pull(filter string, asJSON bool) error {
 		if asJSON {
 			return a.writeJSON([]sourceJSON{})
 		}
-		a.dim("No sources configured. Add one with: gh copilot-instructions add <owner/repo[:path]>")
+		a.note("No Copilot instructions sources added.")
+		a.blank()
+		a.dim("Add a source: gh copilot-instructions add <owner/repo>")
 		return nil
 	}
 	st, err := a.Paths.LoadState()
@@ -217,37 +281,45 @@ func (a *App) Pull(filter string, asJSON bool) error {
 
 	t := term.FromEnv()
 	if !t.IsTerminalOutput() {
-		var firstErr error
+		var fails []sourceFail
+		var warnings []string
 		for _, i := range targets {
 			s := srcs[i]
 			prev, has := st.Sources[s.ID()]
 			out := a.pullSource(s, prev, has, nil)
-			a.printOutcome(s, out)
 			st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
-			if out.err != nil && firstErr == nil {
-				firstErr = out.err
+			if out.err != nil {
+				fails = append(fails, sourceFail{s.Repo, out.err})
+				continue
 			}
+			a.printOutcome(s, out)
+			warnings = append(warnings, out.warnings...)
 		}
 		if err := a.Paths.Save(st); err != nil {
 			return err
 		}
-		a.printCovered("")
-		return firstErr
+		if len(fails) > 0 {
+			a.reportFailures(fails)
+			return ErrReported
+		}
+		a.printPullFooter(warnings, "")
+		return nil
 	}
 
 	rows := a.rowsFor(srcs, st)
 	cs, w := a.tableEnv(t)
 	// A filtered pull focuses the matched rows (and dims the rest), like add; an
 	// unfiltered pull animates every row with no dimming.
-	err = a.animate(rows, srcs, targets, filter != "", st, cs, w)
+	warnings, fails := a.animate(rows, srcs, targets, filter != "", st, cs, w)
 	if e := a.Paths.Save(st); e != nil {
 		return e
 	}
-	if err != nil {
-		return err
+	if len(fails) > 0 {
+		a.reportFailures(fails)
+		return ErrReported
 	}
-	a.printCovered("")
-	return err
+	a.printPullFooter(warnings, "")
+	return nil
 }
 
 // writeJSON marshals v (always a slice for our commands) and writes it the way
@@ -286,15 +358,11 @@ func (a *App) rowsFor(srcs []Source, st *State) []Row {
 	return rows
 }
 
-// printOutcome prints the plain (non-animated) per-source result for a pull.
+// printOutcome prints the plain (non-animated) per-source success line for a
+// pull: the primary output for that source. Failures are handled separately by
+// reportFailures, and warnings are collected by the caller for the secondary
+// block (see printPullFooter), so this is only called for a non-error outcome.
 func (a *App) printOutcome(s Source, out pullOutcome) {
-	for _, w := range out.warnings {
-		a.warn("%s", w)
-	}
-	if out.err != nil {
-		a.fail("%s: %v", s.Repo, out.err)
-		return
-	}
 	if out.skipped {
 		a.dim("  %s  up to date (%s)", s.Repo, short(out.newState.SHA))
 		return
@@ -318,6 +386,7 @@ type liveRow struct {
 	done     bool
 	final    Row
 	newState SourceState
+	warnings []string
 	err      error
 }
 
@@ -325,8 +394,10 @@ type liveRow struct {
 // the live table: the current row shows a yellow spinner, rows queued behind it
 // show the yellow "•" pending icon, finished rows settle to their final state,
 // and non-target rows render dimmed when dimOthers (the `add` focus effect) or
-// full-color static. Results are applied to st; returns the first pull error.
-func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, st *State, cs *ColorScheme, width int) error {
+// full-color static. Results are applied to st; it returns the warnings and the
+// per-source failures collected across the pulled sources, for the caller's
+// secondary block.
+func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, st *State, cs *ColorScheme, width int) ([]string, []sourceFail) {
 	out := a.Out
 
 	// Per-target state, indexed by position in the targets order.
@@ -361,7 +432,10 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 			o := a.pullSource(srcs[i], prevs[p], hasPrev[p], onProgress)
 			final := o.row
 			if o.err != nil {
-				final = a.rowForState(srcs[i], prevs[p], hasPrev[p])
+				// Show the failure using the just-recorded state (which carries
+				// this attempt's PulledAt), not the previous one - so a brand-new
+				// failed source shows its attempt time, not a null "~".
+				final = a.rowForState(srcs[i], o.newState, true)
 				final.State = StateFailed
 			}
 			lr.mu.Lock()
@@ -370,6 +444,7 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 			lr.final = final
 			lr.newState = o.newState
 			lr.updated = o.updated
+			lr.warnings = o.warnings
 			lr.mu.Unlock()
 			doneCh <- struct{}{}
 		}()
@@ -446,15 +521,17 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 	// Apply results (all goroutines have finished). Every attempt is recorded -
 	// a failed pull of a new source persists as FAILED (not PENDING); an
 	// existing source keeps its prior good install (pullSource's failState).
-	var firstErr error
+	var fails []sourceFail
+	var warnings []string
 	for p, i := range targets {
 		lr := lives[p]
-		if lr.err != nil && firstErr == nil {
-			firstErr = lr.err
+		if lr.err != nil {
+			fails = append(fails, sourceFail{srcs[i].Repo, lr.err})
 		}
 		st.Sources[srcs[i].ID()] = lr.newState
+		warnings = append(warnings, lr.warnings...)
 	}
-	return firstErr
+	return warnings, fails
 }
 
 // paintDiff repaints the table in place, rewriting only the lines that changed
@@ -510,14 +587,16 @@ type pullOutcome struct {
 func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress func(sha string, files int)) pullOutcome {
 	now := time.Now().UTC()
 	// failState is what we persist when an attempt fails: a brand-new source
-	// becomes a recorded FAILED row (no files) stamped with the attempt time, so
-	// `list` shows it as FAILED rather than PENDING. An existing source keeps its
+	// becomes a recorded FAILED row (no files), and an existing source keeps its
 	// prior good install - one transient re-pull error shouldn't destroy a
-	// working install or downgrade it.
+	// working install or downgrade it. Either way we stamp PulledAt with THIS
+	// attempt's time, so `list` shows a new source as FAILED (not PENDING) and a
+	// repeatedly-failing source reports its latest failure, not its first.
 	failState := func() pullOutcome {
-		ns := prev
-		if !hasPrev {
-			ns = SourceState{Repo: s.Repo, Ref: s.Ref, Path: s.Path, PulledAt: now}
+		ns := SourceState{Repo: s.Repo, Ref: s.Ref, Path: s.Path, PulledAt: now}
+		if hasPrev {
+			ns = prev // keep a prior good install's files/SHA
+			ns.PulledAt = now
 		}
 		return pullOutcome{newState: ns, row: a.rowForState(s, ns, true)}
 	}
@@ -570,6 +649,7 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 	})
 	var installed []string
 	seen := map[string]string{} // dest path -> repo path that produced it
+	missingApplyTo := 0         // installed files with no applyTo frontmatter value
 	for _, f := range files {
 		rel := s.DestPath(f.Rel)
 		if rel == "" {
@@ -577,7 +657,7 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 			continue
 		}
 		if first, dup := seen[rel]; dup {
-			warnings = append(warnings, fmt.Sprintf("%s  %s and %s both map to %s; keeping %s", s.Repo, first, f.Rel, path.Base(rel), first))
+			warnings = append(warnings, fmt.Sprintf("%s  %s and %s both map to %s, keeping %s", s.Repo, first, f.Rel, path.Base(rel), first))
 			continue
 		}
 		seen[rel] = f.Rel
@@ -586,7 +666,17 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 			o.err = err
 			return o
 		}
+		if !hasApplyTo(f.Content) {
+			missingApplyTo++
+		}
 		installed = append(installed, rel)
+	}
+	// Files without an applyTo value are copied verbatim like any other, but VS
+	// Code won't auto-apply a user-level file that lacks one - so flag them once,
+	// per source, with the fix.
+	if missingApplyTo > 0 {
+		warnings = append(warnings, fmt.Sprintf("%s  %d of %d installed %s no applyTo value, so VS Code won't auto-apply %s (add applyTo: '**').",
+			s.Repo, missingApplyTo, len(installed), have(missingApplyTo), them(missingApplyTo)))
 	}
 	// Prune this source's files that are no longer produced.
 	if hasPrev {
@@ -657,11 +747,12 @@ func (a *App) removeEmptyParents(rel string) {
 	}
 }
 
-// Remove deletes sources matching idOrRepo from the config file and prunes their
-// installed files (by id), regardless of whether the config came from file/env.
-// With asJSON it emits a JSON array of the remaining sources (like `list --json`).
-func (a *App) Remove(idOrRepo string, asJSON bool) error {
-	removedFromFile, err := a.Paths.RemoveSource(idOrRepo)
+// Remove deletes the source identified by target - its slug, or an add-style
+// spec/URL that resolves to it - from the config file and prunes its installed
+// files. With asJSON it emits a JSON array of the remaining sources (like
+// `list --json`).
+func (a *App) Remove(target string, asJSON bool) error {
+	removedFromFile, err := a.Paths.RemoveSource(target)
 	if err != nil {
 		return err
 	}
@@ -671,7 +762,7 @@ func (a *App) Remove(idOrRepo string, asJSON bool) error {
 	}
 	var removedIDs []string
 	for id, ss := range st.Sources {
-		if id == idOrRepo || ss.Repo == idOrRepo {
+		if targetMatches(target, id, ss.Repo, ss.Ref, ss.Path) {
 			a.prune(ss.Files, nil)
 			os.RemoveAll(filepath.Join(a.Paths.InstallDir, FileDir, id))
 			delete(st.Sources, id)
@@ -685,12 +776,13 @@ func (a *App) Remove(idOrRepo string, asJSON bool) error {
 		return a.renderRemainingJSON()
 	}
 	if len(removedFromFile) == 0 && len(removedIDs) == 0 {
-		a.dim("No source matched %q.", idOrRepo)
+		a.dim("No source matched %q.", target)
 		return nil
 	}
-	a.success("Removed %s", a.cs().Bold(idOrRepo))
+	a.success("Removed %s", a.cs().Bold(target))
 	if EnvSet() && len(removedFromFile) > 0 {
-		a.warn("%s is set and overrides the config file.", EnvSources)
+		a.blank()
+		a.note("%s is set and overrides the config file.", EnvSources)
 	}
 	return nil
 }
@@ -747,6 +839,7 @@ func (a *App) RemoveAll(asJSON bool) error {
 		return a.renderRemainingJSON()
 	}
 	a.success("Removed all configured sources and every installed file.")
+	a.blank()
 	a.dim("To remove the command itself: gh extension remove gh-copilot-instructions")
 	return nil
 }
@@ -813,17 +906,22 @@ func (a *App) ListRows() ([]Row, ConfigOrigin, error) {
 	return rows, origin, nil
 }
 
-// printCovered prints the post-pull footer. When id is non-empty (a single
-// source, as in `add`) it points at that source's install directory; otherwise
-// (a full `pull`) it points at the base install directory.
-func (a *App) printCovered(id string) {
-	cs := a.cs()
+// printPullFooter prints the secondary block that follows a pull/add's primary
+// output: a separating blank line, any warnings collected across the pulled
+// sources (yellow "!" + gray, one topic per line), then the muted install-
+// location line. When id is non-empty (a single source, as in `add`) the
+// location points at that source's install directory; otherwise (a full `pull`)
+// it points at the base install directory.
+func (a *App) printPullFooter(warnings []string, id string) {
+	a.blank()
+	for _, w := range warnings {
+		a.note("%s", w)
+	}
 	dir := a.Paths.InstallDir
 	if id != "" {
 		dir = filepath.Join(a.Paths.InstallDir, FileDir, id)
 	}
-	a.msg("")
-	a.msg("%s %s", cs.SuccessIcon(), cs.Gray("Instructions installed to: "+dir))
+	a.dim("Instructions installed to: %s", dir)
 }
 
 func pluralFiles(n int) string {
@@ -831,6 +929,22 @@ func pluralFiles(n int) string {
 		return "pulled 1 file"
 	}
 	return fmt.Sprintf("pulled %d files", n)
+}
+
+// have renders "file has"/"files have" for the applyTo warning's subject.
+func have(n int) string {
+	if n == 1 {
+		return "file has"
+	}
+	return "files have"
+}
+
+// them renders the matching object pronoun for the applyTo warning.
+func them(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
 }
 
 // isOurs reports whether a path (relative to the install dir) is one we manage,

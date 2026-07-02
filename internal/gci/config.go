@@ -14,7 +14,8 @@ const (
 	EnvRef     = "GH_COPILOT_INSTRUCTIONS_REF"   // default ref for lines that omit @ref
 )
 
-// ConfigOrigin describes where the active source list came from.
+// ConfigOrigin describes where the active source list came from. It's used to
+// distinguish "no config at all" (OriginNone) from an empty file/env.
 type ConfigOrigin int
 
 const (
@@ -22,17 +23,6 @@ const (
 	OriginEnv
 	OriginFile
 )
-
-func (o ConfigOrigin) String() string {
-	switch o {
-	case OriginEnv:
-		return EnvSources + " (env)"
-	case OriginFile:
-		return "config file"
-	default:
-		return "none"
-	}
-}
 
 // LoadSources returns the active sources and where they came from. The env var
 // wins when set; otherwise the local file is read. Malformed lines are skipped
@@ -131,16 +121,17 @@ func (p Paths) AddSource(s Source) error {
 	return p.writeFileSources(out)
 }
 
-// RemoveSource removes sources from the local file by id or "owner/repo".
-// Returns the removed sources.
-func (p Paths) RemoveSource(idOrRepo string) ([]Source, error) {
+// RemoveSource removes the source identified by target from the local file:
+// target may be a source's slug or an add-style spec/URL that resolves to its
+// repo/ref/path. Returns the removed sources.
+func (p Paths) RemoveSource(target string) ([]Source, error) {
 	existing, err := p.readFileSources()
 	if err != nil {
 		return nil, err
 	}
 	var kept, removed []Source
 	for _, e := range existing {
-		if e.ID() == idOrRepo || e.Repo == idOrRepo {
+		if targetMatches(target, e.ID(), e.Repo, e.Ref, e.Path) {
 			removed = append(removed, e)
 		} else {
 			kept = append(kept, e)

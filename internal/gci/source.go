@@ -153,11 +153,16 @@ func (s Source) Name() string {
 	return s.Repo
 }
 
-// ID is the deterministic identity of a source: the first 8 base36 chars of
-// sha256("repo\nref\npath"). Stable across machines and re-pulls; unique per
+// ID is the deterministic identity (slug) of a source: the first 8 base36 chars
+// of sha256("repo\nref\npath"). Stable across machines and re-pulls; unique per
 // distinct repo+ref+path; computable offline. Base36 (lowercase 0-9a-z) keeps
 // ids from looking like commit SHAs and stays stable on case-insensitive file
 // systems, while packing more entropy per character than hex.
+//
+// Invariant: a slug never contains a slash. Base36 already guarantees this, and
+// any future custom slugs (see #8) must preserve it - it's what lets a command
+// tell a slug apart from a source spec (owner/repo[@ref][:path]) with no
+// ambiguity (see targetMatches).
 func (s Source) ID() string {
 	sum := sha256.Sum256([]byte(s.Repo + "\n" + s.Ref + "\n" + s.Path))
 	// A 256-bit value is at most 50 base36 digits; left-pad so the id always
@@ -167,6 +172,22 @@ func (s Source) ID() string {
 		b36 = strings.Repeat("0", 8-len(b36)) + b36
 	}
 	return b36[:8]
+}
+
+// targetMatches reports whether a configured source - identified by its slug id
+// and its repo/ref/path coordinates - is the one a remove target refers to.
+//
+// A slug never contains a slash and a source spec always does (owner/repo), so a
+// remove target is unambiguously one or the other. See Source.ID for the
+// no-slash slug invariant that custom slugs must also honor.
+func targetMatches(target, id, repo, ref, path string) bool {
+	if strings.Contains(target, "/") {
+		// A spec/URL: match by coordinates, not by recomputing a slug, so this
+		// stays correct once slugs can be custom (non-deterministic).
+		spec, err := ParseSpec(target)
+		return err == nil && spec.Repo == repo && spec.Ref == ref && spec.Path == path
+	}
+	return id == target
 }
 
 // Spec renders the canonical "owner/repo[@ref][:path]" (no token).

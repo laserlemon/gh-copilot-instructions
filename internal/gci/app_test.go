@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeFetcher serves canned content keyed by source id, with a controllable SHA
@@ -748,5 +749,179 @@ func TestPullJSONReturnsFullListWithUpdated(t *testing.T) {
 	}
 	if got["o/one"] != "UPDATED" || got["o/two"] != "PENDING" {
 		t.Errorf("got %v, want o/one UPDATED + o/two PENDING", got)
+	}
+}
+
+func TestPullWarnsMissingApplyTo(t *testing.T) {
+	src, _ := ParseSpec("o/r")
+	id := src.ID()
+	f := &fakeFetcher{
+		sha: map[string]string{id: "sha1111111111111111111111111111111111111"},
+		files: map[string][]FetchedFile{id: {
+			{Rel: "with.instructions.md", Content: []byte("---\napplyTo: '**'\n---\nok")},
+			{Rel: "without.instructions.md", Content: []byte("no frontmatter here")},
+		}},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	msg := a.Err.(*bytes.Buffer).String()
+	if !strings.Contains(msg, "applyTo") || !strings.Contains(msg, "1 of 2") {
+		t.Fatalf("expected an applyTo warning mentioning 1 of 2, got: %q", msg)
+	}
+}
+
+func TestPullNoApplyToWarningWhenAllTagged(t *testing.T) {
+	src, _ := ParseSpec("o/r2")
+	id := src.ID()
+	f := &fakeFetcher{
+		sha: map[string]string{id: "sha2222222222222222222222222222222222222"},
+		files: map[string][]FetchedFile{id: {
+			{Rel: "a.instructions.md", Content: []byte("---\napplyTo: '**'\n---\na")},
+		}},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	if msg := a.Err.(*bytes.Buffer).String(); strings.Contains(msg, "applyTo") {
+		t.Fatalf("did not expect an applyTo warning, got: %q", msg)
+	}
+}
+
+func TestRemoveBySlugAndVariant(t *testing.T) {
+	def, _ := ParseSpec("o/one")
+	v2, _ := ParseSpec("o/one@v2")
+	f := &fakeFetcher{
+		sha: map[string]string{def.ID(): "d100000000000000000000000000000000000000", v2.ID(): "v200000000000000000000000000000000000000"},
+		files: map[string][]FetchedFile{
+			def.ID(): {{Rel: "a.instructions.md", Content: []byte("---\napplyTo: '**'\n---\na")}},
+			v2.ID():  {{Rel: "b.instructions.md", Content: []byte("---\napplyTo: '**'\n---\nb")}},
+		},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(def); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Paths.AddSource(v2); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// A bare owner/repo targets only the default variant (parity with add), not @v2.
+	if err := a.Remove("o/one", false); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := a.Paths.LoadState()
+	if _, ok := st.Sources[def.ID()]; ok {
+		t.Fatal("default variant should be removed by owner/repo")
+	}
+	if _, ok := st.Sources[v2.ID()]; !ok {
+		t.Fatal("the @v2 variant should remain (not a fuzzy repo match)")
+	}
+
+	// The @v2 variant is removable by its exact spec or its slug.
+	if err := a.Remove(v2.ID(), false); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = a.Paths.LoadState()
+	if _, ok := st.Sources[v2.ID()]; ok {
+		t.Fatal("@v2 should be removed by slug")
+	}
+	srcs, _, _ := a.Paths.LoadSources()
+	if len(srcs) != 0 {
+		t.Fatalf("config should be empty after removing both, got %d", len(srcs))
+	}
+}
+
+func TestRemoveByFullSpec(t *testing.T) {
+	v2, _ := ParseSpec("o/one@v2:sub")
+	f := &fakeFetcher{
+		sha:   map[string]string{v2.ID(): "v200000000000000000000000000000000000000"},
+		files: map[string][]FetchedFile{v2.ID(): {{Rel: "sub/b.instructions.md", Content: []byte("---\napplyTo: '**'\n---\nb")}}},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(v2); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Remove("o/one@v2:sub", false); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := a.Paths.LoadState()
+	if _, ok := st.Sources[v2.ID()]; ok {
+		t.Fatal("source should be removed by its full spec")
+	}
+}
+
+// TestFailedAddReportsAndHints verifies a permission-style failure is reported
+// once (ErrReported, so main won't double-print), with a red ✗ line and the gray
+// --token hint; a non-permission failure reports without the hint.
+func TestFailedAddReportsAndHints(t *testing.T) {
+	s, _ := ParseSpec("o/bad")
+
+	// 404-style: expect the ✗ line and the --token hint.
+	a := newTestApp(t, &errFetcher{err: errors.New("HTTP 404: Not Found")})
+	err := a.Add(s, false)
+	if !errors.Is(err, ErrReported) {
+		t.Fatalf("failed add should return ErrReported, got %v", err)
+	}
+	out := a.Err.(*bytes.Buffer).String()
+	if !strings.Contains(out, "o/bad: HTTP 404") {
+		t.Errorf("missing failure line: %q", out)
+	}
+	if !strings.Contains(out, "--token") {
+		t.Errorf("permission failure should include the --token hint: %q", out)
+	}
+
+	// Non-permission error: reported, but no --token hint.
+	a2 := newTestApp(t, &errFetcher{err: errors.New("tree too large (truncated)")})
+	if err := a2.Add(s, false); !errors.Is(err, ErrReported) {
+		t.Fatalf("failed add should return ErrReported, got %v", err)
+	}
+	if out := a2.Err.(*bytes.Buffer).String(); strings.Contains(out, "--token") {
+		t.Errorf("non-permission failure should not include the --token hint: %q", out)
+	}
+}
+
+// TestRepeatedFailureUpdatesPulledAt verifies that a source failing repeatedly
+// records the latest attempt time, not the first failure's time.
+func TestRepeatedFailureUpdatesPulledAt(t *testing.T) {
+	s, _ := ParseSpec("o/bad")
+	a := newTestApp(t, &errFetcher{err: errors.New("HTTP 404: Not Found")})
+	if err := a.Paths.AddSource(s); err != nil {
+		t.Fatal(err)
+	}
+
+	// First failure records a FAILED state with some PulledAt.
+	_ = a.Pull("", false)
+	st, _ := a.Paths.LoadState()
+	first := st.Sources[s.ID()].PulledAt
+	if first.IsZero() {
+		t.Fatal("first failure should stamp PulledAt")
+	}
+
+	// Backdate it, then fail again: the recorded time must advance.
+	ss := st.Sources[s.ID()]
+	ss.PulledAt = first.Add(-time.Hour)
+	st.Sources[s.ID()] = ss
+	if err := a.Paths.Save(st); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Pull("", false)
+	st2, _ := a.Paths.LoadState()
+	if got := st2.Sources[s.ID()].PulledAt; !got.After(ss.PulledAt) {
+		t.Fatalf("repeated failure should report the latest time: backdated %v, got %v", ss.PulledAt, got)
 	}
 }

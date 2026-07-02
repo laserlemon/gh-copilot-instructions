@@ -277,3 +277,32 @@ func TestSourceMatchesScopesToPath(t *testing.T) {
 		t.Error("default should not match a plain .md")
 	}
 }
+
+func TestTargetMatches(t *testing.T) {
+	// A source with a CUSTOM slug "team" whose coordinates are o/r (default
+	// ref/path). "team" is deliberately not the deterministic hash of o/r.
+	const id, repo, ref, path = "team", "o/r", "", ""
+
+	cases := []struct {
+		name   string
+		target string
+		want   bool
+	}{
+		{"by slug", "team", true},
+		{"by owner/repo coordinates", "o/r", true}, // works despite custom slug
+		{"by blob url coordinates", "https://github.com/o/r", true},
+		{"wrong slug", "other", false},
+		{"wrong repo", "o/other", false},
+		{"spec adds a ref the source lacks", "o/r@v2", false},
+	}
+	for _, c := range cases {
+		if got := targetMatches(c.target, id, repo, ref, path); got != c.want {
+			t.Errorf("%s: targetMatches(%q, ...) = %v, want %v", c.name, c.target, got, c.want)
+		}
+	}
+
+	// And a ref/path variant matches only its exact coordinates.
+	if !targetMatches("o/r@v2:sub", "sluggy", "o/r", "v2", "sub") {
+		t.Error("full spec should match its exact coordinates")
+	}
+}
