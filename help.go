@@ -16,6 +16,12 @@ func applyGHStyle(root *cobra.Command) {
 	// gh's help flag: no -h shorthand, gh-style description. Defining it here
 	// stops cobra from adding its own "-h, --help   help for X".
 	root.PersistentFlags().Bool("help", false, "Show help for command")
+	// Match gh's command groups (gh pr, gh issue): no auto-generated `help` or
+	// `completion` command. Discovery is via `--help` on each command. Replacing
+	// the help command with a hidden one makes `help` an unknown command (as in
+	// `gh pr help`); DisableDefaultCmd drops the `completion` command.
+	root.SetHelpCommand(&cobra.Command{Use: "no-help", Hidden: true})
+	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetHelpFunc(ghHelp)
 	root.SetUsageFunc(ghUsage)
 }
@@ -74,11 +80,12 @@ func ghUsageBody(w io.Writer, c *cobra.Command) {
 }
 
 // visibleSubcommands returns the child commands gh would show (skipping hidden
-// ones, but keeping the auto-generated help command, like gh does).
+// ones). Like gh's command groups, the auto-generated help/completion commands
+// are not shown (see applyGHStyle).
 func visibleSubcommands(c *cobra.Command) []*cobra.Command {
 	var subs []*cobra.Command
 	for _, s := range c.Commands() {
-		if s.IsAvailableCommand() || s.Name() == "help" {
+		if s.IsAvailableCommand() {
 			subs = append(subs, s)
 		}
 	}
