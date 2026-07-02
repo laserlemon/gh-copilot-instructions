@@ -14,7 +14,8 @@ const (
 	EnvRef     = "GH_COPILOT_INSTRUCTIONS_REF"   // default ref for lines that omit @ref
 )
 
-// ConfigOrigin describes where the active source list came from.
+// ConfigOrigin describes where the active source list came from. It's used to
+// distinguish "no config at all" (OriginNone) from an empty file/env.
 type ConfigOrigin int
 
 const (
@@ -22,17 +23,6 @@ const (
 	OriginEnv
 	OriginFile
 )
-
-func (o ConfigOrigin) String() string {
-	switch o {
-	case OriginEnv:
-		return EnvSources + " (env)"
-	case OriginFile:
-		return "config file"
-	default:
-		return "none"
-	}
-}
 
 // LoadSources returns the active sources and where they came from. The env var
 // wins when set; otherwise the local file is read. Malformed lines are skipped

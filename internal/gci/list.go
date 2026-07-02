@@ -28,7 +28,7 @@ func (a *App) RenderList(asJSON, raw bool) error {
 	if raw {
 		return a.renderRaw()
 	}
-	rows, origin, err := a.ListRows()
+	rows, _, err := a.ListRows()
 	if err != nil {
 		return err
 	}
@@ -45,7 +45,7 @@ func (a *App) RenderList(asJSON, raw bool) error {
 	cs := &ColorScheme{enabled: t.IsColorEnabled()}
 
 	if len(rows) == 0 {
-		a.dim("No sources configured (%s).", origin)
+		a.dim("No Copilot instructions sources added.")
 		a.blank()
 		a.dim("Add a source: gh copilot-instructions add <owner/repo>")
 		if isTTY {

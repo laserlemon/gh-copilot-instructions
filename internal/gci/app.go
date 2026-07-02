@@ -187,7 +187,7 @@ func (a *App) Pull(filter string, asJSON bool) error {
 		if asJSON {
 			return a.writeJSON([]sourceJSON{})
 		}
-		a.dim("No sources configured.")
+		a.dim("No Copilot instructions sources added.")
 		a.blank()
 		a.dim("Add a source: gh copilot-instructions add <owner/repo>")
 		return nil
