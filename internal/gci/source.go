@@ -153,11 +153,16 @@ func (s Source) Name() string {
 	return s.Repo
 }
 
-// ID is the deterministic identity of a source: the first 8 base36 chars of
-// sha256("repo\nref\npath"). Stable across machines and re-pulls; unique per
+// ID is the deterministic identity (slug) of a source: the first 8 base36 chars
+// of sha256("repo\nref\npath"). Stable across machines and re-pulls; unique per
 // distinct repo+ref+path; computable offline. Base36 (lowercase 0-9a-z) keeps
 // ids from looking like commit SHAs and stays stable on case-insensitive file
 // systems, while packing more entropy per character than hex.
+//
+// Invariant: a slug never contains a slash. Base36 already guarantees this, and
+// any future custom slugs (see #8) must preserve it - it's what lets a command
+// tell a slug apart from a source spec (owner/repo[@ref][:path]) with no
+// ambiguity (see targetMatches).
 func (s Source) ID() string {
 	sum := sha256.Sum256([]byte(s.Repo + "\n" + s.Ref + "\n" + s.Path))
 	// A 256-bit value is at most 50 base36 digits; left-pad so the id always
@@ -170,22 +175,19 @@ func (s Source) ID() string {
 }
 
 // targetMatches reports whether a configured source - identified by its slug id
-// and its repo/ref/path coordinates - is the one a remove target refers to. The
-// target matches if it is the source's slug, or an add-style spec/URL that
-// resolves to the same coordinates.
+// and its repo/ref/path coordinates - is the one a remove target refers to.
 //
-// A spec is matched by comparing coordinates rather than by recomputing a slug
-// from them, so remove stays correct if slugs ever become custom (non-
-// deterministic): the source is still found by its owner/repo[@ref][:path], and
-// its actual slug - custom or default - is what gets removed.
+// A slug never contains a slash and a source spec always does (owner/repo), so a
+// remove target is unambiguously one or the other. See Source.ID for the
+// no-slash slug invariant that custom slugs must also honor.
 func targetMatches(target, id, repo, ref, path string) bool {
-	if id == target {
-		return true
+	if strings.Contains(target, "/") {
+		// A spec/URL: match by coordinates, not by recomputing a slug, so this
+		// stays correct once slugs can be custom (non-deterministic).
+		spec, err := ParseSpec(target)
+		return err == nil && spec.Repo == repo && spec.Ref == ref && spec.Path == path
 	}
-	if spec, err := ParseSpec(target); err == nil {
-		return spec.Repo == repo && spec.Ref == ref && spec.Path == path
-	}
-	return false
+	return id == target
 }
 
 // Spec renders the canonical "owner/repo[@ref][:path]" (no token).
