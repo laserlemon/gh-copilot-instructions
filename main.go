@@ -30,19 +30,14 @@ func rootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "copilot-instructions [<command>]",
 		Short: "Sync your Copilot custom instructions to every coding surface",
-		Long: "Pull your Copilot custom instructions from one or more repos into\n" +
-			"~/.copilot/instructions/, where Copilot CLI, VS Code, and the GitHub\n" +
-			"Copilot desktop app all read them automatically - no per-repo setup.\n\n" +
+		Long: "Install Copilot custom instructions from one or more repositories. They\n" +
+			"apply automatically in Copilot CLI, the GitHub Copilot app, VS Code, and\n" +
+			"VS Code connected to a GitHub Codespace.\n\n" +
 			"Run with no command to list your configured sources (like `list`).",
 		Example: heredoc(`
-			# Add your team's shared instructions and pull them
-			$ gh copilot-instructions add github/team-instructions
-
-			# Update every configured source to its latest commit
-			$ gh copilot-instructions pull
-
-			# See what's configured and installed
-			$ gh copilot-instructions`),
+			$ gh copilot-instructions add laserlemon/my-instructions
+			$ gh copilot-instructions auto-pull --every day
+			$ gh copilot-instructions list`),
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
