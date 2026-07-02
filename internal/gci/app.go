@@ -3,6 +3,7 @@ package gci
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -103,6 +104,52 @@ func (a *App) note(format string, args ...any) {
 	a.msg("%s %s", a.cs().WarningIcon(), a.cs().Gray(fmt.Sprintf(format, args...)))
 }
 
+// ErrReported marks an error whose message the App has already presented to the
+// user (a styled ✗ failure line, plus any hint). main checks for it via
+// errors.Is and sets a non-zero exit status without printing a duplicate
+// "error:" line.
+var ErrReported = errors.New("reported")
+
+// sourceFail pairs a failed source's repo with its error, for the failure block.
+type sourceFail struct {
+	repo string
+	err  error
+}
+
+// permissionHint returns a --token nudge for a permission-style failure
+// (404/403), or "" for anything else, so a user who hit a private or missing
+// repository learns the likely fix.
+func permissionHint(err error) string {
+	m := strings.ToLower(err.Error())
+	if strings.Contains(m, "404") || strings.Contains(m, "403") ||
+		strings.Contains(m, "not found") || strings.Contains(m, "forbidden") {
+		return "If gh can't access a repository, provide a personal access token (read repository contents) with --token."
+	}
+	return ""
+}
+
+// reportFailures prints the failure block for one or more failed sources,
+// following the primary/secondary model: a blank separator (from any preceding
+// table or success lines), a red ✗ primary line per failure, then - if any looks
+// like a permissions problem - a blank and a single gray --token hint.
+func (a *App) reportFailures(fails []sourceFail) {
+	if len(fails) == 0 {
+		return
+	}
+	a.blank()
+	hint := ""
+	for _, f := range fails {
+		a.fail("%s: %v", f.repo, f.err)
+		if hint == "" {
+			hint = permissionHint(f.err)
+		}
+	}
+	if hint != "" {
+		a.blank()
+		a.dim("%s", hint)
+	}
+}
+
 // Add upserts a source into the local config file, then pulls just that source.
 // On a terminal it renders the full instructions table with that row animating
 // (spinner + live SHA/FILES + elapsed) while every other row is dimmed, settling
@@ -148,27 +195,28 @@ func (a *App) Add(s Source, asJSON bool) error {
 	if !t.IsTerminalOutput() || target < 0 {
 		prev, has := st.Sources[s.ID()]
 		out := a.pullSource(s, prev, has, nil)
-		a.printOutcome(s, out)
 		st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
 		if e := a.Paths.Save(st); e != nil {
 			return e
 		}
 		if out.err != nil {
-			return out.err
+			a.reportFailures([]sourceFail{{s.Repo, out.err}})
+			return ErrReported
 		}
+		a.printOutcome(s, out)
 		a.printPullFooter(out.warnings, s.ID())
 		return nil
 	}
 
 	rows := a.rowsFor(srcs, st)
 	cs, w := a.tableEnv(t)
-	warnings, err := a.animate(rows, srcs, []int{target}, true, st, cs, w)
+	warnings, fails := a.animate(rows, srcs, []int{target}, true, st, cs, w)
 	if e := a.Paths.Save(st); e != nil {
 		return e
 	}
-	if err != nil {
-		a.fail("%s: %v", s.Repo, err)
-		return err
+	if len(fails) > 0 {
+		a.reportFailures(fails)
+		return ErrReported
 	}
 	a.printPullFooter(warnings, s.ID())
 	return nil
@@ -233,39 +281,45 @@ func (a *App) Pull(filter string, asJSON bool) error {
 
 	t := term.FromEnv()
 	if !t.IsTerminalOutput() {
-		var firstErr error
+		var fails []sourceFail
 		var warnings []string
 		for _, i := range targets {
 			s := srcs[i]
 			prev, has := st.Sources[s.ID()]
 			out := a.pullSource(s, prev, has, nil)
+			st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
+			if out.err != nil {
+				fails = append(fails, sourceFail{s.Repo, out.err})
+				continue
+			}
 			a.printOutcome(s, out)
 			warnings = append(warnings, out.warnings...)
-			st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
-			if out.err != nil && firstErr == nil {
-				firstErr = out.err
-			}
 		}
 		if err := a.Paths.Save(st); err != nil {
 			return err
 		}
+		if len(fails) > 0 {
+			a.reportFailures(fails)
+			return ErrReported
+		}
 		a.printPullFooter(warnings, "")
-		return firstErr
+		return nil
 	}
 
 	rows := a.rowsFor(srcs, st)
 	cs, w := a.tableEnv(t)
 	// A filtered pull focuses the matched rows (and dims the rest), like add; an
 	// unfiltered pull animates every row with no dimming.
-	warnings, err := a.animate(rows, srcs, targets, filter != "", st, cs, w)
+	warnings, fails := a.animate(rows, srcs, targets, filter != "", st, cs, w)
 	if e := a.Paths.Save(st); e != nil {
 		return e
 	}
-	if err != nil {
-		return err
+	if len(fails) > 0 {
+		a.reportFailures(fails)
+		return ErrReported
 	}
 	a.printPullFooter(warnings, "")
-	return err
+	return nil
 }
 
 // writeJSON marshals v (always a slice for our commands) and writes it the way
@@ -304,15 +358,11 @@ func (a *App) rowsFor(srcs []Source, st *State) []Row {
 	return rows
 }
 
-// printOutcome prints the plain (non-animated) per-source result line for a
-// pull: the primary output for that source. Warnings are not printed here - the
-// caller collects them across sources and prints them in the secondary block
-// (see printPullFooter).
+// printOutcome prints the plain (non-animated) per-source success line for a
+// pull: the primary output for that source. Failures are handled separately by
+// reportFailures, and warnings are collected by the caller for the secondary
+// block (see printPullFooter), so this is only called for a non-error outcome.
 func (a *App) printOutcome(s Source, out pullOutcome) {
-	if out.err != nil {
-		a.fail("%s: %v", s.Repo, out.err)
-		return
-	}
 	if out.skipped {
 		a.dim("  %s  up to date (%s)", s.Repo, short(out.newState.SHA))
 		return
@@ -344,10 +394,10 @@ type liveRow struct {
 // the live table: the current row shows a yellow spinner, rows queued behind it
 // show the yellow "•" pending icon, finished rows settle to their final state,
 // and non-target rows render dimmed when dimOthers (the `add` focus effect) or
-// full-color static. Results are applied to st; it returns the warnings
-// collected across the pulled sources (for the caller's secondary block) and the
-// first pull error.
-func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, st *State, cs *ColorScheme, width int) ([]string, error) {
+// full-color static. Results are applied to st; it returns the warnings and the
+// per-source failures collected across the pulled sources, for the caller's
+// secondary block.
+func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, st *State, cs *ColorScheme, width int) ([]string, []sourceFail) {
 	out := a.Out
 
 	// Per-target state, indexed by position in the targets order.
@@ -468,17 +518,17 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 	// Apply results (all goroutines have finished). Every attempt is recorded -
 	// a failed pull of a new source persists as FAILED (not PENDING); an
 	// existing source keeps its prior good install (pullSource's failState).
-	var firstErr error
+	var fails []sourceFail
 	var warnings []string
 	for p, i := range targets {
 		lr := lives[p]
-		if lr.err != nil && firstErr == nil {
-			firstErr = lr.err
+		if lr.err != nil {
+			fails = append(fails, sourceFail{srcs[i].Repo, lr.err})
 		}
 		st.Sources[srcs[i].ID()] = lr.newState
 		warnings = append(warnings, lr.warnings...)
 	}
-	return warnings, firstErr
+	return warnings, fails
 }
 
 // paintDiff repaints the table in place, rewriting only the lines that changed

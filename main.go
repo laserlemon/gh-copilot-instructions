@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -12,23 +13,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// tokenHint appends a --token nudge to permission-style failures (404/403), so a
-// user who hit a private or inaccessible repository learns the likely fix.
-func tokenHint(err error) error {
-	if err == nil {
-		return nil
-	}
-	m := strings.ToLower(err.Error())
-	if strings.Contains(m, "404") || strings.Contains(m, "403") ||
-		strings.Contains(m, "not found") || strings.Contains(m, "forbidden") {
-		return fmt.Errorf("%w\nIf gh cannot access a repository, you may provide a personal access token (with permission to read repository contents) using --token.", err)
-	}
-	return err
-}
-
 func main() {
 	if err := rootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		// Failures the App already presented (a styled ✗ line plus any hint) are
+		// marked ErrReported, so we set the exit status without printing a
+		// duplicate "error:" line.
+		if !errors.Is(err, gci.ErrReported) {
+			fmt.Fprintln(os.Stderr, "error:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -107,7 +99,7 @@ func addCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return tokenHint(newApp().Add(s, asJSON))
+			return newApp().Add(s, asJSON)
 		},
 	}
 	c.Flags().StringVar(&repo, "repo", "", "Source repository (`owner/repo`)")
@@ -142,7 +134,7 @@ func pullCmd() *cobra.Command {
 			if len(args) == 1 {
 				filter = args[0]
 			}
-			return tokenHint(newApp().Pull(filter, asJSON))
+			return newApp().Pull(filter, asJSON)
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")

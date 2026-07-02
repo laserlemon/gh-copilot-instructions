@@ -863,3 +863,33 @@ func TestRemoveByFullSpec(t *testing.T) {
 		t.Fatal("source should be removed by its full spec")
 	}
 }
+
+// TestFailedAddReportsAndHints verifies a permission-style failure is reported
+// once (ErrReported, so main won't double-print), with a red ✗ line and the gray
+// --token hint; a non-permission failure reports without the hint.
+func TestFailedAddReportsAndHints(t *testing.T) {
+	s, _ := ParseSpec("o/bad")
+
+	// 404-style: expect the ✗ line and the --token hint.
+	a := newTestApp(t, &errFetcher{err: errors.New("HTTP 404: Not Found")})
+	err := a.Add(s, false)
+	if !errors.Is(err, ErrReported) {
+		t.Fatalf("failed add should return ErrReported, got %v", err)
+	}
+	out := a.Err.(*bytes.Buffer).String()
+	if !strings.Contains(out, "o/bad: HTTP 404") {
+		t.Errorf("missing failure line: %q", out)
+	}
+	if !strings.Contains(out, "--token") {
+		t.Errorf("permission failure should include the --token hint: %q", out)
+	}
+
+	// Non-permission error: reported, but no --token hint.
+	a2 := newTestApp(t, &errFetcher{err: errors.New("tree too large (truncated)")})
+	if err := a2.Add(s, false); !errors.Is(err, ErrReported) {
+		t.Fatalf("failed add should return ErrReported, got %v", err)
+	}
+	if out := a2.Err.(*bytes.Buffer).String(); strings.Contains(out, "--token") {
+		t.Errorf("non-permission failure should not include the --token hint: %q", out)
+	}
+}
