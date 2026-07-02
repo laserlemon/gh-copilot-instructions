@@ -317,7 +317,7 @@ func (a *App) AutoPullStatus(asJSON bool) error {
 // the secondary block use the yellow ! status icon with gray text; the enable
 // command stays the primary color so it stands out as the thing to run.
 //
-//	✓ Auto-pull is enabled - every 3 hours, via launchd.
+//	✓ Auto-pull is enabled to pull every 3 hours.
 //
 //	Runs: gh copilot-instructions pull
 //	Log:  ~/.local/state/gh-copilot-instructions/auto-pull.log
@@ -337,7 +337,7 @@ func (a *App) printAutoPull(st *State) {
 	enabled := st.AutoPull != nil && st.AutoPull.Enabled
 	installed, ierr := sc.Installed()
 	if enabled {
-		a.msg("%s Auto-pull is enabled - %s, via %s.", cs.Green("✓"), cadenceFromState(st).Human(), sc.Kind())
+		a.msg("%s Auto-pull is enabled to pull %s.", cs.Green("✓"), cadenceFromState(st).Human())
 		a.blank()
 		if ierr == nil && !installed {
 			a.note("The scheduled job is missing; re-run `gh copilot-instructions auto-pull enable` to reinstall it.")
