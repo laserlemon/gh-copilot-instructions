@@ -584,14 +584,16 @@ type pullOutcome struct {
 func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress func(sha string, files int)) pullOutcome {
 	now := time.Now().UTC()
 	// failState is what we persist when an attempt fails: a brand-new source
-	// becomes a recorded FAILED row (no files) stamped with the attempt time, so
-	// `list` shows it as FAILED rather than PENDING. An existing source keeps its
+	// becomes a recorded FAILED row (no files), and an existing source keeps its
 	// prior good install - one transient re-pull error shouldn't destroy a
-	// working install or downgrade it.
+	// working install or downgrade it. Either way we stamp PulledAt with THIS
+	// attempt's time, so `list` shows a new source as FAILED (not PENDING) and a
+	// repeatedly-failing source reports its latest failure, not its first.
 	failState := func() pullOutcome {
-		ns := prev
-		if !hasPrev {
-			ns = SourceState{Repo: s.Repo, Ref: s.Ref, Path: s.Path, PulledAt: now}
+		ns := SourceState{Repo: s.Repo, Ref: s.Ref, Path: s.Path, PulledAt: now}
+		if hasPrev {
+			ns = prev // keep a prior good install's files/SHA
+			ns.PulledAt = now
 		}
 		return pullOutcome{newState: ns, row: a.rowForState(s, ns, true)}
 	}

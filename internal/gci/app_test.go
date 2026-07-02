@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeFetcher serves canned content keyed by source id, with a controllable SHA
@@ -891,5 +892,36 @@ func TestFailedAddReportsAndHints(t *testing.T) {
 	}
 	if out := a2.Err.(*bytes.Buffer).String(); strings.Contains(out, "--token") {
 		t.Errorf("non-permission failure should not include the --token hint: %q", out)
+	}
+}
+
+// TestRepeatedFailureUpdatesPulledAt verifies that a source failing repeatedly
+// records the latest attempt time, not the first failure's time.
+func TestRepeatedFailureUpdatesPulledAt(t *testing.T) {
+	s, _ := ParseSpec("o/bad")
+	a := newTestApp(t, &errFetcher{err: errors.New("HTTP 404: Not Found")})
+	if err := a.Paths.AddSource(s); err != nil {
+		t.Fatal(err)
+	}
+
+	// First failure records a FAILED state with some PulledAt.
+	_ = a.Pull("", false)
+	st, _ := a.Paths.LoadState()
+	first := st.Sources[s.ID()].PulledAt
+	if first.IsZero() {
+		t.Fatal("first failure should stamp PulledAt")
+	}
+
+	// Backdate it, then fail again: the recorded time must advance.
+	ss := st.Sources[s.ID()]
+	ss.PulledAt = first.Add(-time.Hour)
+	st.Sources[s.ID()] = ss
+	if err := a.Paths.Save(st); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Pull("", false)
+	st2, _ := a.Paths.LoadState()
+	if got := st2.Sources[s.ID()].PulledAt; !got.After(ss.PulledAt) {
+		t.Fatalf("repeated failure should report the latest time: backdated %v, got %v", ss.PulledAt, got)
 	}
 }
