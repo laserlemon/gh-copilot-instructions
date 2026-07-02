@@ -114,7 +114,7 @@ func pullCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "pull [<id | owner/repo>]",
-		Short: "Pull all configured sources, or just one",
+		Short: "Pull one or all sources",
 		Long: "Pull all configured sources, or just the one matching the given id or\n" +
 			"owner/repo.\n\n" +
 			"With --json, each source is reported with a state of \"pulled\",\n" +
