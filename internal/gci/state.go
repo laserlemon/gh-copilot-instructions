@@ -19,8 +19,21 @@ type SourceState struct {
 
 // State maps source id -> SourceState.
 type State struct {
-	Sources  map[string]SourceState `json:"sources"`
-	AutoPull *AutoPullState         `json:"autoPull,omitempty"`
+	Sources    map[string]SourceState `json:"sources"`
+	AutoPull   *AutoPullState         `json:"autoPull,omitempty"`
+	Codespaces *CodespacesState       `json:"codespaces,omitempty"`
+}
+
+// CodespacesState records what this machine last pushed to the user's
+// GH_COPILOT_INSTRUCTIONS Codespaces secret. It is nil until `codespaces setup`
+// (or `codespaces update`) first pushes the secret. SecretSignature is the
+// ConfigSignature of the source set at push time; `codespaces check` compares it
+// against the current signature to detect drift. Because the secret's value is
+// write-only via the API, this local record - not a remote marker - is how we
+// answer "did my sources change since I last pushed?" on the machine that pushed.
+type CodespacesState struct {
+	SecretSignature string    `json:"secretSignature"`
+	PushedAt        time.Time `json:"pushedAt"`
 }
 
 // AutoPullState records the user's scheduled-pull intent (see autopull.go). It

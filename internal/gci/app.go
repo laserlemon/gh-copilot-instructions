@@ -33,10 +33,11 @@ type fetcher interface {
 type App struct {
 	Paths Paths
 	F     fetcher
-	Sched scheduler    // OS scheduler for auto-pull (nil => resolved per-platform)
-	Out   io.Writer    // data (stdout)
-	Err   io.Writer    // progress / messages (stderr)
-	CS    *ColorScheme // color scheme for Err (stderr) messages
+	Sched scheduler     // OS scheduler for auto-pull (nil => resolved per-platform)
+	CSAPI codespacesAPI // GitHub calls for the codespaces commands (nil => real API)
+	Out   io.Writer     // data (stdout)
+	Err   io.Writer     // progress / messages (stderr)
+	CS    *ColorScheme  // color scheme for Err (stderr) messages
 
 	// outTTY/outColor describe stdout, so --json output is pretty-printed and
 	// syntax-highlighted on a terminal and stays compact when piped (matching

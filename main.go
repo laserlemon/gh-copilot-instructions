@@ -47,7 +47,7 @@ func rootCmd() *cobra.Command {
 		},
 	}
 	root.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
-	root.AddCommand(addCmd(), pullCmd(), listCmd(), removeCmd(), autoPullCmd())
+	root.AddCommand(addCmd(), pullCmd(), listCmd(), removeCmd(), autoPullCmd(), codespacesCmd())
 	applyGHStyle(root)
 	return root
 }
@@ -288,6 +288,48 @@ func autoPullCmd() *cobra.Command {
 	}
 
 	c.AddCommand(enable, disable, status)
+	return c
+}
+
+// codespacesCmd is the `codespaces` group. `check` is the default subcommand, so
+// `gh copilot-instructions codespaces` runs the read-only readiness doctor.
+// (setup/update land in later phases; see the codespaces feature issue.)
+func codespacesCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "codespaces [check]",
+		Short: "Check and set up instructions for Codespaces",
+		Long: "Get your instructions working in Codespaces. A Codespace starts without\n" +
+			"your home directory, so it needs a GH_COPILOT_INSTRUCTIONS secret and a\n" +
+			"per-Codespace step that installs this extension and pulls your sources.\n\n" +
+			"Run with no argument (or check) for a read-only readiness report. Run it\n" +
+			"inside a Codespace to verify the setup actually took effect there.",
+		Example: heredoc(`
+			# Report Codespaces readiness (nothing is changed)
+			$ gh copilot-instructions codespaces
+
+			# Machine-readable readiness for scripting
+			$ gh copilot-instructions codespaces check --json`),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return newApp().CodespacesCheck(asJSON)
+		},
+	}
+	c.PersistentFlags().BoolVar(&asJSON, "json", false, "Output JSON")
+
+	check := &cobra.Command{
+		Use:   "check",
+		Short: "Report Codespaces readiness without changing anything",
+		Long: "Run every readiness detector and report each as ✓/✗/!, with a copy-paste\n" +
+			"fix for any gap. Never writes. Supports --json. Run inside a Codespace to\n" +
+			"check whether the setup actually took effect there instead.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return newApp().CodespacesCheck(asJSON)
+		},
+	}
+
+	c.AddCommand(check)
 	return c
 }
 
