@@ -135,9 +135,11 @@ func (a *App) diagnose() []checkResult {
 	st, sterr := a.Paths.LoadState()
 	add(a.checkInstallDir())
 	add(a.checkInstalledFiles(st, sterr))
+	maybe(a.checkFrontmatter(st, sterr))
 	maybe(a.checkNeverPulled(srcs, st, sterr))
 	maybe(a.checkUpdates(srcs, st, shas, sterr))
 	maybe(a.checkStaleState(srcs, st, sterr))
+	maybe(a.checkInlineTokens(srcs))
 
 	maybe(a.checkVSCode())
 	maybe(a.checkCodespaces())
@@ -293,6 +295,46 @@ func (a *App) checkInstalledFiles(st *State, sterr error) checkResult {
 			"gh copilot-instructions source pull (or delete them)"}
 	}
 	return checkResult{statusOK, fmt.Sprintf("All %s present", plur(total, "installed file is", "installed files are")), ""}
+}
+
+func (a *App) checkFrontmatter(st *State, sterr error) (checkResult, bool) {
+	if sterr != nil {
+		return checkResult{}, false
+	}
+	checked, noApply := 0, 0
+	for _, ss := range st.Sources {
+		for _, rel := range ss.Files {
+			data, err := os.ReadFile(filepath.Join(a.Paths.InstallDir, rel))
+			if err != nil {
+				continue // missing files are reported by checkInstalledFiles
+			}
+			checked++
+			if !hasApplyTo(data) {
+				noApply++
+			}
+		}
+	}
+	if checked == 0 || noApply == 0 {
+		return checkResult{}, false
+	}
+	return checkResult{statusWarn,
+		fmt.Sprintf("%d of %d instruction files have no applyTo frontmatter (may not auto-apply in VS Code)", noApply, checked),
+		"Add applyTo frontmatter to the files in the source repo"}, true
+}
+
+func (a *App) checkInlineTokens(srcs []Source) (checkResult, bool) {
+	n := 0
+	for _, s := range srcs {
+		if s.Token != "" {
+			n++
+		}
+	}
+	if n == 0 {
+		return checkResult{}, false
+	}
+	return checkResult{statusWarn,
+		fmt.Sprintf("%s an inline token stored in your config file", plur(n, "source has", "sources have")),
+		"Prefer gh auth or GH_COPILOT_INSTRUCTIONS_TOKEN to keep tokens out of the file"}, true
 }
 
 func (a *App) checkNeverPulled(srcs []Source, st *State, sterr error) (checkResult, bool) {

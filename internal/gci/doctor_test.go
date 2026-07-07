@@ -73,7 +73,7 @@ func installOne(t *testing.T, a *App) Source {
 	src, _ := ParseSpec("o/r")
 	if ff, ok := a.F.(*fakeFetcher); ok {
 		ff.sha = map[string]string{src.ID(): "sha1111111111111111111111111111111111111"}
-		ff.files = map[string][]FetchedFile{src.ID(): {{Rel: "a.instructions.md", Content: []byte("A")}}}
+		ff.files = map[string][]FetchedFile{src.ID(): {{Rel: "a.instructions.md", Content: []byte("---\napplyTo: '**'\n---\nA")}}}
 	}
 	if err := a.Paths.AddSource(src); err != nil {
 		t.Fatal(err)
@@ -172,6 +172,32 @@ func TestDoctorExitNonZeroOnFail(t *testing.T) {
 	if err := a.Doctor(true); !errors.Is(err, ErrReported) {
 		t.Fatalf("Doctor should return ErrReported when a check fails, got %v", err)
 	}
+}
+
+func TestDoctorFrontmatter(t *testing.T) {
+	src, _ := ParseSpec("o/r")
+	f := &fakeFetcher{
+		sha:   map[string]string{src.ID(): "sha1111111111111111111111111111111111111"},
+		files: map[string][]FetchedFile{src.ID(): {{Rel: "notes.instructions.md", Content: []byte("no frontmatter here")}}},
+	}
+	a := newDoctorApp(t, f)
+	if err := a.Paths.AddSource(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	res := a.diagnose()
+	mustCheck(t, res, "no applyTo frontmatter", statusWarn)
+}
+
+func TestDoctorInlineToken(t *testing.T) {
+	a := newDoctorApp(t, &fakeFetcher{})
+	if err := a.Paths.AddSource(Source{Repo: "o/r", Token: "ghp_secret"}); err != nil {
+		t.Fatal(err)
+	}
+	res := a.diagnose()
+	mustCheck(t, res, "inline token stored", statusWarn)
 }
 
 func TestPlur(t *testing.T) {
