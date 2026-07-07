@@ -169,13 +169,14 @@ func runList(asJSON, raw bool) error {
 func newApp() *gci.App { return gci.New(os.Stdout, os.Stderr) }
 
 func addCmd() *cobra.Command {
-	var repo, ref, path, token string
+	var ref, path, token string
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "add [<owner/repo[@ref][:path]>]",
 		Short: "Add a source and pull it",
-		Long: "Add a source, then pull. Provide a positional spec, or use flags, or\n" +
-			"mix them (a flag overrides the matching part of the spec). Quote a glob.\n\n" +
+		Long: "Add a source, then pull. Give the source as an owner/repo[@ref][:path]\n" +
+			"spec or a GitHub blob URL; --ref and --path override the matching part\n" +
+			"of the spec, and a glob must be quoted.\n\n" +
 			"Your gh auth is used by default. If gh cannot access a repository, you may\n" +
 			"provide a personal access token (with permission to read repository\n" +
 			"contents) using --token.",
@@ -186,22 +187,21 @@ func addCmd() *cobra.Command {
 			# Pin a ref and select a path within the repository
 			$ gh copilot-instructions add github/team-instructions@main:instructions
 
-			# Build the source from flags instead of a spec
-			$ gh copilot-instructions add --repo github/team-instructions --ref v1.2.0`),
+			# Add a private source with an access token
+			$ gh copilot-instructions add acme/private-instructions --token ghp_...`),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			spec := ""
 			if len(args) == 1 {
 				spec = args[0]
 			}
-			s, err := buildSource(spec, repo, ref, path, token)
+			s, err := buildSource(spec, ref, path, token)
 			if err != nil {
 				return err
 			}
 			return newApp().Add(s, asJSON)
 		},
 	}
-	c.Flags().StringVar(&repo, "repo", "", "Source repository (`owner/repo`)")
 	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
 	c.Flags().StringVar(&path, "path", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
 	c.Flags().StringVar(&token, "token", "", "Personal access token (read repository contents) for when gh cannot access a repository")
@@ -269,7 +269,7 @@ func listCmd() *cobra.Command {
 }
 
 func removeCmd() *cobra.Command {
-	var repo, ref, path string
+	var ref, path string
 	var all, asJSON bool
 	c := &cobra.Command{
 		Use:   "remove [<slug | owner/repo[@ref][:path]>]",
@@ -277,8 +277,8 @@ func removeCmd() *cobra.Command {
 		Long: "Remove one configured source and prune the files it installed, or use\n" +
 			"--all to remove every source, all installed files, and the local config.\n\n" +
 			"Identify the source the way you added it: an owner/repo[@ref][:path] spec,\n" +
-			"a GitHub blob URL, or the equivalent --repo/--ref/--path flags. You can\n" +
-			"also pass a source's slug from the SLUG column of the list output.\n\n" +
+			"a GitHub blob URL, or the equivalent --ref/--path flags. You can also pass\n" +
+			"a source's slug from the SLUG column of the list output.\n\n" +
 			"With --json, the remaining sources are reported (like list --json).",
 		Example: heredoc(`
 			# Remove a source by owner/repo
@@ -300,15 +300,15 @@ func removeCmd() *cobra.Command {
 				spec = args[0]
 			}
 			if all {
-				if spec != "" || repo != "" || ref != "" || path != "" {
+				if spec != "" || ref != "" || path != "" {
 					return fmt.Errorf("--all takes no other arguments")
 				}
 				return app.RemoveAll(asJSON)
 			}
-			// A spec/URL or --repo/--ref/--path builds the exact source, the same
-			// way add identifies it; a bare token is treated as a slug.
-			if repo != "" || ref != "" || path != "" || strings.Contains(spec, "/") {
-				s, err := buildRemoveTarget(spec, repo, ref, path)
+			// A spec/URL or --ref/--path builds the exact source, the same way add
+			// identifies it; a bare token is treated as a slug.
+			if ref != "" || path != "" || strings.Contains(spec, "/") {
+				s, err := buildRemoveTarget(spec, ref, path)
 				if err != nil {
 					return err
 				}
@@ -320,7 +320,6 @@ func removeCmd() *cobra.Command {
 			return app.Remove(spec, asJSON)
 		},
 	}
-	c.Flags().StringVar(&repo, "repo", "", "Source repository (`owner/repo`)")
 	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
 	c.Flags().StringVar(&path, "path", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
 	c.Flags().BoolVar(&all, "all", false, "Remove every source, all installed files, and config")
@@ -416,7 +415,7 @@ func heredoc(s string) string {
 // buildSource combines an optional positional spec with flag overrides. It uses
 // ResolveSpec so an ambiguous GitHub blob URL (a slashed branch name) is
 // disambiguated against the API, matching how add stores the source.
-func buildSource(spec, repo, ref, path, token string) (gci.Source, error) {
+func buildSource(spec, ref, path, token string) (gci.Source, error) {
 	var base gci.Source
 	if spec != "" {
 		parsed, err := newApp().ResolveSpec(spec)
@@ -425,14 +424,14 @@ func buildSource(spec, repo, ref, path, token string) (gci.Source, error) {
 		}
 		base = parsed
 	}
-	return mergeSource(base, repo, ref, path, token)
+	return mergeSource(base, ref, path, token)
 }
 
 // buildRemoveTarget builds the source to remove from an optional spec plus flag
 // overrides. Unlike buildSource it resolves offline (ParseSpec), because remove
 // only needs to identify an already-configured source and must never require the
 // network; the slug is the escape hatch for the rare slashed-ref blob URL.
-func buildRemoveTarget(spec, repo, ref, path string) (gci.Source, error) {
+func buildRemoveTarget(spec, ref, path string) (gci.Source, error) {
 	var base gci.Source
 	if spec != "" {
 		parsed, err := gci.ParseSpec(spec)
@@ -441,15 +440,12 @@ func buildRemoveTarget(spec, repo, ref, path string) (gci.Source, error) {
 		}
 		base = parsed
 	}
-	return mergeSource(base, repo, ref, path, "")
+	return mergeSource(base, ref, path, "")
 }
 
 // mergeSource applies flag overrides onto a parsed base source and validates it.
-func mergeSource(base gci.Source, repo, ref, path, token string) (gci.Source, error) {
+func mergeSource(base gci.Source, ref, path, token string) (gci.Source, error) {
 	s := base
-	if repo != "" {
-		s.Repo = repo
-	}
 	if ref != "" {
 		s.Ref = ref
 	}
@@ -460,7 +456,7 @@ func mergeSource(base gci.Source, repo, ref, path, token string) (gci.Source, er
 		s.Token = token
 	}
 	if s.Repo == "" {
-		return s, fmt.Errorf("a repo is required: pass owner/repo or --repo owner/repo")
+		return s, fmt.Errorf("a source is required: pass owner/repo[@ref][:path] or a GitHub blob URL")
 	}
 	if _, err := gci.ParseSpec(s.Repo); err != nil {
 		return s, err

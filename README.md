@@ -27,8 +27,7 @@ or restart the desktop app to pick up changes).
 
 ```
 gh copilot-instructions                                                    # list sources (or show help on a fresh install)
-gh copilot-instructions source add <owner/repo[@ref][:path]> [--token T]    # add a source, then pull
-gh copilot-instructions source add --repo R [--ref REF] [--path P] [--token T]
+gh copilot-instructions source add <owner/repo[@ref][:path]> [--ref REF] [--path P] [--token T]
 gh copilot-instructions source pull [<id | owner/repo>]                     # pull all configured sources, or just one
 gh copilot-instructions source list [--raw]                                 # show sources and their pulled state
 gh copilot-instructions source remove <slug | owner/repo[@ref][:path]>       # remove one source and prune its files
@@ -58,7 +57,7 @@ and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly i
   or `--raw` to print the sources in config-file format (one per line, with any inline tokens) — ready
   to paste into the multiline `GH_COPILOT_INSTRUCTIONS` Codespaces secret.
 - **`source remove`** identifies a source the same way `source add` does — an `owner/repo[@ref][:path]`
-  spec, a GitHub blob URL, or `--repo`/`--ref`/`--path` flags — or by its **slug** (the `SLUG` column
+  spec, a GitHub blob URL, or `--ref`/`--path` flags — or by its **slug** (the `SLUG` column
   of `source list`). `source remove` / `source remove --all` only ever delete files this tool installed
   (they live under the `~/.copilot/instructions/gh-copilot-instructions/` directory) — your own
   hand-written instruction files are never touched.
