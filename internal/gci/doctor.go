@@ -396,7 +396,7 @@ func (a *App) checkLeftoverState(srcs []Source, st *State, sterr error) checkRes
 	if stale > 0 {
 		return checkResult{statusWarn, label, fmt.Sprintf("%s pulled but no longer in your config; the files remain. Run source remove <slug>", plur(stale, "source was", "sources were"))}
 	}
-	return checkResult{statusOK, label, "None linger from deleted sources"}
+	return checkResult{statusOK, label, "No files from deleted sources"}
 }
 
 func (a *App) checkVSCode() checkResult {
