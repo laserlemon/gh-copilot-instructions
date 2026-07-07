@@ -355,15 +355,19 @@ func autoPullCmd() *cobra.Command {
 	disable := &cobra.Command{
 		Use:   "disable",
 		Short: "Disable scheduled background pulling",
-		Args:  cobra.NoArgs,
+		Long: "Remove the recurring background pull so it stops running. Sources then\n" +
+			"refresh only when you run `gh copilot-instructions pull` yourself.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return newApp().AutoPullDisable(jsonOut)
 		},
 	}
 
 	status := &cobra.Command{
-		Use:         "status",
-		Short:       "Show whether auto-pull is enabled and its cadence",
+		Use:   "status",
+		Short: "Show whether auto-pull is enabled and its cadence",
+		Long: "Report whether scheduled background pulling is enabled and, if so, how\n" +
+			"often it runs.",
 		Annotations: map[string]string{"helpProxy": "auto-pull"},
 		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
