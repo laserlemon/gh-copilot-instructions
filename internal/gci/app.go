@@ -157,6 +157,7 @@ func (a *App) reportFailures(fails []sourceFail) {
 // plain progress lines. With asJSON it pulls quietly and emits a one-element JSON
 // array with the added source's result.
 func (a *App) Add(s Source, asJSON bool) error {
+	defer a.syncVSCode(asJSON)
 	if err := a.Paths.AddSource(s); err != nil {
 		return err
 	}
@@ -227,6 +228,7 @@ func (a *App) Add(s Source, asJSON bool) error {
 // table; off a terminal it prints plain per-source progress lines. With asJSON
 // it instead pulls quietly and emits a JSON array of per-source results.
 func (a *App) Pull(filter string, asJSON bool) error {
+	defer a.syncVSCode(asJSON)
 	srcs, origin, err := a.Paths.LoadSources()
 	if err != nil {
 		a.msg("%v", err) // report malformed lines but continue with the rest
@@ -752,6 +754,7 @@ func (a *App) removeEmptyParents(rel string) {
 // files. With asJSON it emits a JSON array of the remaining sources (like
 // `list --json`).
 func (a *App) Remove(target string, asJSON bool) error {
+	defer a.syncVSCode(asJSON)
 	removedFromFile, err := a.Paths.RemoveSource(target)
 	if err != nil {
 		return err
@@ -811,6 +814,7 @@ func (a *App) renderRemainingJSON() error {
 // RemoveAll clears all configured sources and removes every file we installed.
 // With asJSON it emits a JSON array of the remaining sources (always empty).
 func (a *App) RemoveAll(asJSON bool) error {
+	defer a.syncVSCode(asJSON)
 	st, err := a.Paths.LoadState()
 	if err != nil {
 		return err

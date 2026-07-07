@@ -1,12 +1,14 @@
 # gh-copilot-instructions
 
 A [`gh` CLI](https://cli.github.com) extension that **pulls your Copilot custom instructions** from
-one or more repos into `~/.copilot/instructions/` — the single user-level location that every
-Copilot surface reads — so your instructions apply **everywhere, with no per-repo setup**:
+one or more repos into the user-level locations every Copilot surface reads — so your instructions
+apply **everywhere, with no per-repo setup**:
 
-- **Copilot CLI** (local and in Codespaces)
-- **VS Code** — local, Remote-SSH, Codespaces (web), and VS Code connected to a Codespace
-- the **GitHub Copilot desktop app** (it inherits `~/.copilot`)
+- **Copilot CLI** (local and in Codespaces) and the **GitHub Copilot desktop app** — both read
+  `~/.copilot/instructions/`.
+- **VS Code** — local, and VS Code Desktop connected to a Codespace. VS Code reads its own
+  user-level `prompts` directory rather than `~/.copilot`, so the tool **also installs a copy there**
+  when it detects VS Code (see [VS Code](#vs-code)).
 
 It fetches over the GitHub API using your existing `gh` authentication — **no `git`, no credential
 helper, nothing touches your keychain.**
@@ -109,8 +111,9 @@ Other variables: `GH_COPILOT_INSTRUCTIONS_TOKEN` (fallback token), `GH_COPILOT_I
   gh copilot-instructions pull
   ```
   Every new codespace then self-installs your instructions with no prompts.
-- **VS Code / desktop app:** nothing to configure — they read `~/.copilot/instructions/`
-  automatically. Reload the window / restart the app to pick up changes.
+- **VS Code / desktop app:** nothing to configure. The desktop app reads `~/.copilot/instructions/`;
+  VS Code reads its own prompts directory, which the tool populates automatically when it's installed
+  (see [VS Code](#vs-code)). Reload the window / restart the app to pick up changes.
 
 ## Keep it fresh with auto-pull
 
@@ -141,6 +144,32 @@ path to `gh` so it works regardless of the scheduler's `PATH`. Output is logged 
 drifted apart (for example, if the agent was removed by hand). Pulls run non-interactively, so the
 scheduled job needs your `gh` auth to be readable without a prompt — check the log if a source stops
 updating.
+
+## VS Code
+
+VS Code reads user-level instructions from its **own** profile directory — `User/prompts/` — not from
+`~/.copilot/instructions/`. So when the tool detects VS Code, `add`/`pull` install a second copy of
+your instructions into its prompts directory (and `remove` prunes it):
+
+```
+<VS Code User dir>/prompts/gh-copilot-instructions/<id>/<file>.instructions.md
+```
+
+- **Detected editors:** Stable (`Code`), Insiders (`Code - Insiders`), and VSCodium, on macOS, Linux,
+  and Windows. A copy is written only for an editor whose profile directory already exists — the tool
+  never creates one, and simply does nothing on a machine without VS Code.
+- **This also covers Codespaces opened in VS Code Desktop.** When you connect Desktop to a Codespace,
+  VS Code applies your **local** machine's instructions (client-side), so no Codespaces setup is
+  needed for that workflow. (A Codespace's **integrated terminal** — where the Copilot CLI runs — is a
+  separate surface; getting instructions there is the job of the Codespaces setup, still in progress.)
+- The copies are kept in sync on every `pull`: files are updated, and instructions for removed sources
+  are pruned. The tool only ever manages its own `gh-copilot-instructions/` subdirectory, so your
+  hand-written `*.instructions.md` prompt files are never touched.
+
+> **Not covered:** Codespaces opened **in the browser** (`*.github.dev`). VS Code for the Web doesn't
+> reliably apply user-level instruction files today, and no file placement changes that — so the tool
+> can't target it. If that changes upstream, the browser will pick these up automatically via Settings
+> Sync, since the tool already populates the directory Sync carries.
 
 ## A note on VS Code and `applyTo`
 
