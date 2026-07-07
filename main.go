@@ -79,8 +79,7 @@ func sourceCmd() *cobra.Command {
 		Use:   "source <command> [flags]",
 		Short: "Manage instruction sources",
 		Long: "Manage the repositories your instructions are pulled from: list them, pull\n" +
-			"them, add one (and pull it), or remove one (or all of them).\n\n" +
-			"Run with no subcommand to list your sources.",
+			"them, add one (and pull it), or remove one (or all of them).",
 		Example: heredoc(`
 			$ gh copilot-instructions source add acme/team-instructions
 			$ gh copilot-instructions source list
@@ -100,8 +99,7 @@ func fileCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "file <command> [flags]",
 		Short: "Show pulled instruction files",
-		Long: "List the instruction files installed from your configured sources.\n\n" +
-			"Run with no subcommand to list files.",
+		Long: "List the instruction files installed from your configured sources.",
 		Example: heredoc(`
 			# List every installed instruction file and its source
 			$ gh copilot-instructions file list
@@ -261,8 +259,7 @@ func removeCmd() *cobra.Command {
 			"--all to remove every source, all installed files, and the local config.\n\n" +
 			"Identify the source the way you added it: owner/repo (optionally with\n" +
 			"--ref/--path), a GitHub blob URL, or its slug (the SLUG column of the\n" +
-			"list output).\n\n" +
-			"With --json, the remaining sources are reported (like list --json).",
+			"list output).",
 		Example: heredoc(`
 			# Remove a source by owner/repo
 			$ gh copilot-instructions source remove acme/team-instructions
@@ -318,8 +315,7 @@ func autoPullCmd() *cobra.Command {
 		Long: "Enable or disable a recurring background pull, so this machine keeps its\n" +
 			"instructions fresh with no manual step. When enabled, macOS (launchd) runs\n" +
 			"gh copilot-instructions pull on a cadence. macOS only for now. Other\n" +
-			"platforms print how to schedule it themselves.\n\n" +
-			"Run with no argument (or status) to see the current state.",
+			"platforms print how to schedule it themselves.",
 		Example: heredoc(`
 			# Show whether auto-pull is enabled and how often it runs
 			$ gh copilot-instructions auto-pull
