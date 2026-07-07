@@ -38,10 +38,9 @@ func applyGHStyle(root *cobra.Command) {
 	root.SetUsageFunc(ghUsage)
 }
 
-// ghHelp prints the full help page (description + usage body). Commands that
-// carry a helpProxy annotation (default subcommands and their aliases) render
-// the help of their canonical command instead, so that, e.g., `file`,
-// `file list`, and `files` all show the exact same page.
+// ghHelp prints the full help page (description + usage body). Hidden aliases
+// carry a helpProxy annotation and render the help of their target command
+// instead, so that, e.g., `files` shows the exact same page as `file list`.
 func ghHelp(c *cobra.Command, _ []string) {
 	if t := helpProxyTarget(c); t != nil {
 		c = t

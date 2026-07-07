@@ -65,8 +65,8 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(
 		alias("add", "source add", addCmd()),
 		alias("pull", "source pull", pullCmd()),
-		alias("sources", "source", listCmd()),
-		alias("files", "file", fileListCmd()),
+		alias("sources", "source list", listCmd()),
+		alias("files", "file list", fileListCmd()),
 	)
 	applyGHStyle(root)
 	return root
@@ -115,9 +115,8 @@ func fileCmd() *cobra.Command {
 
 func fileListCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:         "list",
-		Short:       "List all pulled instruction files",
-		Annotations: map[string]string{"helpProxy": "file"},
+		Use:   "list",
+		Short: "List all pulled instruction files",
 		Long: "List every instruction file installed from your configured sources,\n" +
 			"with the source each came from.",
 		Example: heredoc(`
@@ -234,10 +233,9 @@ func pullCmd() *cobra.Command {
 func listCmd() *cobra.Command {
 	var raw bool
 	c := &cobra.Command{
-		Use:         "list",
-		Short:       "List all sources and their states",
-		Long:        "List all sources and their states.",
-		Annotations: map[string]string{"helpProxy": "source"},
+		Use:   "list",
+		Short: "List all sources and their states",
+		Long:  "List all sources and their states.",
 		Example: heredoc(`
 			$ gh copilot-instructions source list
 			$ gh copilot-instructions source list --raw
@@ -368,8 +366,7 @@ func autoPullCmd() *cobra.Command {
 		Short: "Show whether auto-pull is enabled and its cadence",
 		Long: "Report whether scheduled background pulling is enabled and, if so, how\n" +
 			"often it runs.",
-		Annotations: map[string]string{"helpProxy": "auto-pull"},
-		Args:        cobra.NoArgs,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return newApp().AutoPullStatus(jsonOut)
 		},
