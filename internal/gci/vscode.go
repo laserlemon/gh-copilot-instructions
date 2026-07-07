@@ -6,25 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 )
-
-// EnvNoVSCode opts out of mirroring instructions into VS Code's prompts dir.
-// Any non-empty value other than "0"/"false" disables it. VS Code reads
-// user-scope instructions from its own User/prompts directory (not
-// ~/.copilot/instructions), so by default we mirror our managed subtree there
-// too; set this to keep the tool from touching VS Code's directories at all.
-const EnvNoVSCode = "GH_COPILOT_INSTRUCTIONS_NO_VSCODE"
 
 // vsCodeVariants are the VS Code application-support directory names we look
 // for. Stable and Insiders share the same on-disk layout; VSCodium too.
 var vsCodeVariants = []string{"Code", "Code - Insiders", "VSCodium"}
-
-// vscodeOptOut reports whether the user disabled VS Code mirroring.
-func vscodeOptOut() bool {
-	v := strings.TrimSpace(os.Getenv(EnvNoVSCode))
-	return v != "" && v != "0" && !strings.EqualFold(v, "false")
-}
 
 // vscodeUserDirs returns candidate "<app>/User" directories for the given OS.
 // Pure (no I/O) so path construction is unit-testable across platforms. On
@@ -54,11 +40,8 @@ func vscodeUserDirs(goos, home, appData string) []string {
 //
 // Only variants whose User directory already exists are returned, so we never
 // create a VS Code profile from nothing and simply no-op on machines (and CI)
-// without VS Code installed. Honors the EnvNoVSCode opt-out.
+// without VS Code installed.
 func vscodePromptDirs() []string {
-	if vscodeOptOut() {
-		return nil
-	}
 	var out []string
 	for _, userDir := range vscodeUserDirs(runtime.GOOS, homeDir(), os.Getenv("APPDATA")) {
 		if fi, err := os.Stat(userDir); err != nil || !fi.IsDir() {

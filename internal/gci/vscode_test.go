@@ -71,7 +71,6 @@ func vsUserDir(t *testing.T) string {
 func TestVSCodePromptDirsDetection(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv(EnvNoVSCode, "")
 
 	// No VS Code installed yet -> no roots.
 	if dirs := vscodePromptDirs(); len(dirs) != 0 {
@@ -84,23 +83,11 @@ func TestVSCodePromptDirsDetection(t *testing.T) {
 	if len(dirs) != 1 || dirs[0] != filepath.Join(vsUser, "prompts") {
 		t.Fatalf("expected [%s], got %v", filepath.Join(vsUser, "prompts"), dirs)
 	}
-
-	// Opt-out disables detection entirely.
-	t.Setenv(EnvNoVSCode, "1")
-	if dirs := vscodePromptDirs(); len(dirs) != 0 {
-		t.Fatalf("opt-out should disable, got %v", dirs)
-	}
-	// "0"/"false" are treated as not-opted-out.
-	t.Setenv(EnvNoVSCode, "false")
-	if dirs := vscodePromptDirs(); len(dirs) != 1 {
-		t.Fatalf(`EnvNoVSCode="false" should not opt out, got %v`, dirs)
-	}
 }
 
 func TestMirrorCopyUpdatePrune(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv(EnvNoVSCode, "")
 	vsUser := vsUserDir(t)
 	a := &App{Paths: DefaultPaths()}
 
@@ -169,7 +156,6 @@ func TestAddMirrorsThroughDefer(t *testing.T) {
 		}},
 	}
 	a := newTestApp(t, f)
-	t.Setenv(EnvNoVSCode, "")
 	vsUser := vsUserDir(t)
 	mirrorFile := filepath.Join(vsUser, "prompts", FileDir, id, "a.instructions.md")
 
@@ -191,24 +177,5 @@ func TestAddMirrorsThroughDefer(t *testing.T) {
 	}
 	if _, err := os.Stat(mirrorFile); !os.IsNotExist(err) {
 		t.Fatalf("VS Code mirror should be pruned after remove, stat err=%v", err)
-	}
-}
-
-func TestAddOptOutSkipsVSCode(t *testing.T) {
-	src, _ := ParseSpec("o/r")
-	id := src.ID()
-	f := &fakeFetcher{
-		sha:   map[string]string{id: "sha1"},
-		files: map[string][]FetchedFile{id: {{Rel: "a.instructions.md", Content: []byte("hi")}}},
-	}
-	a := newTestApp(t, f)
-	t.Setenv(EnvNoVSCode, "1")
-	vsUser := vsUserDir(t)
-
-	if err := a.Add(src, true); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-	if entries, err := os.ReadDir(filepath.Join(vsUser, "prompts")); err == nil && len(entries) > 0 {
-		t.Fatalf("opt-out should not write to VS Code prompts, found %v", entries)
 	}
 }
