@@ -54,7 +54,7 @@ func rootCmd() *cobra.Command {
 			return runList(jsonOut, false)
 		},
 	}
-	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "Output JSON")
+	root.PersistentFlags().BoolVarP(&jsonOut, "json", "j", false, "Output JSON")
 	// Canonical command groups.
 	root.AddCommand(sourceCmd(), fileCmd(), autoPullCmd())
 	// Hidden top-level aliases keep common commands reachable under short names
@@ -199,9 +199,9 @@ func addCmd() *cobra.Command {
 			return newApp().Add(s, jsonOut)
 		},
 	}
-	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
-	c.Flags().StringVar(&path, "path", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
-	c.Flags().StringVar(&token, "token", "", "Personal access token (read repository contents) for repositories that gh cannot access")
+	c.Flags().StringVarP(&ref, "ref", "r", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
+	c.Flags().StringVarP(&path, "path", "p", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
+	c.Flags().StringVarP(&token, "token", "t", "", "Personal access token (read repository contents) for repositories that gh cannot access")
 	return c
 }
 
@@ -315,8 +315,8 @@ func removeCmd() *cobra.Command {
 			return app.Remove(arg, jsonOut)
 		},
 	}
-	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
-	c.Flags().StringVar(&path, "path", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
+	c.Flags().StringVarP(&ref, "ref", "r", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
+	c.Flags().StringVarP(&path, "path", "p", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
 	c.Flags().BoolVar(&all, "all", false, "Remove every source, all installed files, and config")
 	return c
 }

@@ -19,13 +19,13 @@ var topLevelShortcuts = []struct{ Alias, Equiv string }{
 
 // applyGHStyle makes the command tree render help the way built-in gh commands
 // do: uppercase section headers (USAGE, COMMANDS, FLAGS, EXAMPLES, LEARN MORE),
-// a "gh "-prefixed usage line, and a "--help" flag described as "Show help for
-// command" (with no -h shorthand). Setting the funcs on the root is enough -
-// cobra walks up to the nearest ancestor for a command without its own.
+// a "gh "-prefixed usage line, and a "-h, --help" flag described as "Show help
+// for command". Setting the funcs on the root is enough - cobra walks up to the
+// nearest ancestor for a command without its own.
 func applyGHStyle(root *cobra.Command) {
-	// gh's help flag: no -h shorthand, gh-style description. Defining it here
-	// stops cobra from adding its own "-h, --help   help for X".
-	root.PersistentFlags().Bool("help", false, "Show help for command")
+	// Define the help flag ourselves (gh-style description) instead of letting
+	// cobra add its own "-h, --help   help for X".
+	root.PersistentFlags().BoolP("help", "h", false, "Show help for command")
 	// Match gh's command groups (gh pr, gh issue): no auto-generated `help` or
 	// `completion` command. Discovery is via `--help` on each command. Replacing
 	// the help command with a hidden one makes `help` an unknown command (as in
