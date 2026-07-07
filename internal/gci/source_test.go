@@ -8,7 +8,7 @@ func TestParseSpec(t *testing.T) {
 		repo, ref, path string
 		wantErr         bool
 	}{
-		{in: "laserlemon/my-instructions", repo: "laserlemon/my-instructions"},
+		{in: "acme/team-instructions", repo: "acme/team-instructions"},
 		{in: "acme/standards@main", repo: "acme/standards", ref: "main"},
 		{in: "acme/standards@release/2026", repo: "acme/standards", ref: "release/2026"},
 		{in: "o/r:instructions/*.md", repo: "o/r", path: "instructions/*.md"},

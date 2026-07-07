@@ -17,7 +17,7 @@ helper, nothing touches your keychain.**
 
 ```bash
 gh extension install laserlemon/gh-copilot-instructions
-gh copilot-instructions add laserlemon/my-instructions
+gh copilot-instructions add acme/team-instructions
 ```
 
 That's it — your instruction files are now installed and applied across every surface (reload VS Code
@@ -96,9 +96,8 @@ Configuration lives in **one of two places, same format**:
 
 ```
 # example — one source per line:  owner/repo[@ref][:path]  [token]
-laserlemon/my-instructions
-acme/standards@main
-partner/secure-rules:**/*.instructions.md   github_pat_xxx
+acme/team-instructions
+acme/standards@main:**/*.instructions.md   github_pat_xxx
 ```
 
 Token resolution per source: inline token → `GH_COPILOT_INSTRUCTIONS_TOKEN` → your `gh` auth →

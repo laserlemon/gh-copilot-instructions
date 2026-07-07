@@ -37,7 +37,7 @@ func rootCmd() *cobra.Command {
 			"Locally, instructions apply automatically in Copilot CLI, GitHub Copilot\n" +
 			"app, and VS Code. Instructions apply in Codespaces with additional setup.",
 		Example: heredoc(`
-			$ gh copilot-instructions add laserlemon/my-instructions
+			$ gh copilot-instructions add acme/team-instructions
 			$ gh copilot-instructions source list
 			$ gh copilot-instructions auto-pull enable --every day`),
 		Args:          cobra.NoArgs,
@@ -82,7 +82,7 @@ func sourceCmd() *cobra.Command {
 			"their state, add one (and pull it), remove one, or pull them all.\n\n" +
 			"Run with no subcommand to list your sources.",
 		Example: heredoc(`
-			$ gh copilot-instructions source add github/team-instructions
+			$ gh copilot-instructions source add acme/team-instructions
 			$ gh copilot-instructions source list
 			$ gh copilot-instructions source pull`),
 		Args: cobra.NoArgs,
@@ -218,7 +218,7 @@ func pullCmd() *cobra.Command {
 			$ gh copilot-instructions source pull
 
 			# Pull just one source by id or owner/repo
-			$ gh copilot-instructions source pull github/team-instructions
+			$ gh copilot-instructions source pull acme/team-instructions
 
 			# List the repos whose commit changed on this pull
 			$ gh copilot-instructions source pull --json | jq -r '.[] | select(.state=="updated") | .repo'`),
@@ -275,10 +275,10 @@ func removeCmd() *cobra.Command {
 			"With --json, the remaining sources are reported (like list --json).",
 		Example: heredoc(`
 			# Remove a source by owner/repo
-			$ gh copilot-instructions source remove github/team-instructions
+			$ gh copilot-instructions source remove acme/team-instructions
 
 			# Remove a specific ref/path variant (the way it was added)
-			$ gh copilot-instructions source remove github/team-instructions --ref main --path instructions
+			$ gh copilot-instructions source remove acme/team-instructions --ref main --path instructions
 
 			# Remove by slug, from the SLUG column of the list output
 			$ gh copilot-instructions source remove a1b2c3d4

@@ -259,7 +259,7 @@ func TestRenderRaw(t *testing.T) {
 	// Two sources: one with an inline token, one without; plus a ref+path.
 	s1, _ := ParseSpec("acme/standards@main:**/*.instructions.md")
 	s1.Token = "github_pat_SECRET"
-	s2, _ := ParseSpec("oss/public-rules")
+	s2, _ := ParseSpec("acme/team-instructions")
 	if err := a.Paths.AddSource(s1); err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestRenderRaw(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := buf.String()
-	want := "acme/standards@main:**/*.instructions.md   github_pat_SECRET\noss/public-rules\n"
+	want := "acme/standards@main:**/*.instructions.md   github_pat_SECRET\nacme/team-instructions\n"
 	if got != want {
 		t.Fatalf("renderRaw =\n%q\nwant\n%q", got, want)
 	}
