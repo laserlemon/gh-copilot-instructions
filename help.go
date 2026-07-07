@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/laserlemon/gh-copilot-instructions/internal/gci"
 	"github.com/spf13/cobra"
 )
 
@@ -45,11 +46,12 @@ func ghHelp(c *cobra.Command, _ []string) {
 	if t := helpProxyTarget(c); t != nil {
 		c = t
 	}
+	out, _ := gci.Schemes()
 	w := c.OutOrStdout()
 	if desc := longOrShort(c); desc != "" {
 		fmt.Fprintf(w, "%s\n\n", desc)
 	}
-	ghUsageBody(w, c)
+	ghUsageBody(w, c, out)
 }
 
 // helpProxyTarget resolves the command whose help should render in place of c,
@@ -91,24 +93,28 @@ func childByName(c *cobra.Command, name string) *cobra.Command {
 // ghUsage prints just the usage body (no description); used when cobra needs a
 // command's usage string on its own.
 func ghUsage(c *cobra.Command) error {
-	ghUsageBody(c.OutOrStderr(), c)
+	_, errCS := gci.Schemes()
+	ghUsageBody(c.OutOrStderr(), c, errCS)
 	return nil
 }
 
-func ghUsageBody(w io.Writer, c *cobra.Command) {
+// ghUsageBody renders the usage sections. Section headers are bolded via cs
+// (gated on the target stream's color capability), matching gh's help style;
+// when color is off (piped/NO_COLOR) the headers render as plain text.
+func ghUsageBody(w io.Writer, c *cobra.Command, cs *gci.ColorScheme) {
 	// Merge inherited (persistent) flags into c's flag set so UseLine renders a
 	// stable "[flags]" suffix whether or not c was the parsed command (proxied
 	// help targets are not parsed, so their flags would otherwise be unmerged).
 	_ = c.InheritedFlags()
-	fmt.Fprintf(w, "USAGE\n  gh %s\n", c.UseLine())
+	fmt.Fprintf(w, "%s\n  gh %s\n", cs.Bold("USAGE"), c.UseLine())
 
 	if len(c.Aliases) > 0 {
-		fmt.Fprintf(w, "\nALIASES\n  %s\n", c.NameAndAliases())
+		fmt.Fprintf(w, "\n%s\n  %s\n", cs.Bold("ALIASES"), c.NameAndAliases())
 	}
 
 	subs := visibleSubcommands(c)
 	if len(subs) > 0 {
-		fmt.Fprint(w, "\nCOMMANDS\n")
+		fmt.Fprintf(w, "\n%s\n", cs.Bold("COMMANDS"))
 		pad := 0
 		for _, s := range subs {
 			if n := len(s.Name()) + 1; n > pad { // +1 for the trailing colon
@@ -123,7 +129,7 @@ func ghUsageBody(w io.Writer, c *cobra.Command) {
 	// SHORTCUTS lists the hidden top-level aliases and what they expand to. It's
 	// only meaningful on the root command, where those aliases live.
 	if c.Parent() == nil && len(topLevelShortcuts) > 0 {
-		fmt.Fprint(w, "\nSHORTCUTS\n")
+		fmt.Fprintf(w, "\n%s\n", cs.Bold("SHORTCUTS"))
 		pad := 0
 		for _, s := range topLevelShortcuts {
 			if n := len(s.Alias) + 1; n > pad { // +1 for the trailing colon
@@ -136,18 +142,18 @@ func ghUsageBody(w io.Writer, c *cobra.Command) {
 	}
 
 	if c.HasAvailableLocalFlags() {
-		fmt.Fprintf(w, "\nFLAGS\n%s", c.LocalFlags().FlagUsages())
+		fmt.Fprintf(w, "\n%s\n%s", cs.Bold("FLAGS"), c.LocalFlags().FlagUsages())
 	}
 	if c.HasAvailableInheritedFlags() {
-		fmt.Fprintf(w, "\nINHERITED FLAGS\n%s", c.InheritedFlags().FlagUsages())
+		fmt.Fprintf(w, "\n%s\n%s", cs.Bold("INHERITED FLAGS"), c.InheritedFlags().FlagUsages())
 	}
 
 	if c.HasExample() {
-		fmt.Fprintf(w, "\nEXAMPLES\n%s\n", c.Example)
+		fmt.Fprintf(w, "\n%s\n%s\n", cs.Bold("EXAMPLES"), c.Example)
 	}
 
 	if len(subs) > 0 {
-		fmt.Fprintf(w, "\nLEARN MORE\n  Use `gh %s <command> --help` for more information about a command.\n", c.CommandPath())
+		fmt.Fprintf(w, "\n%s\n  Use `gh %s <command> --help` for more information about a command.\n", cs.Bold("LEARN MORE"), c.CommandPath())
 	}
 }
 

@@ -68,6 +68,10 @@ func newSchemes() (out, err *ColorScheme) {
 	return &ColorScheme{enabled: t.IsColorEnabled()}, &ColorScheme{enabled: colorEnabledFor(os.Stderr)}
 }
 
+// Schemes exposes newSchemes to the CLI (package main) for help rendering, so
+// bold section headers are gated on each stream's color capability.
+func Schemes() (out, err *ColorScheme) { return newSchemes() }
+
 // colorEnabledFor decides whether to emit color to a specific file (used for
 // stderr, which go-gh's Term only evaluates for stdout).
 func colorEnabledFor(f *os.File) bool {
