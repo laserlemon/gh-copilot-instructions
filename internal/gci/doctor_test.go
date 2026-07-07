@@ -194,6 +194,22 @@ func TestDoctorFrontmatter(t *testing.T) {
 	mustCheck(t, res, "applyTo frontmatter", statusWarn)
 }
 
+func TestDoctorFailedSources(t *testing.T) {
+	a := newDoctorApp(t, &fakeFetcher{})
+	src, _ := ParseSpec("o/r")
+	ff := a.F.(*fakeFetcher)
+	ff.sha = map[string]string{src.ID(): "sha1111111111111111111111111111111111111"}
+	// No files entry => the pull matches nothing (records empty state).
+	if err := a.Paths.AddSource(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	res := a.diagnose()
+	mustCheck(t, res, "Failed sources", statusWarn)
+}
+
 func TestDoctorUpgradeAvailable(t *testing.T) {
 	a := newDoctorApp(t, &fakeFetcher{})
 	a.Version = "v1.0.0"

@@ -147,7 +147,7 @@ func (a *App) diagnose() []checkResult {
 		a.checkSourcesPerms(),
 		reach,
 		a.checkUpdates(srcs, st, shas, sterr),
-		a.checkUnpulled(srcs, st, sterr),
+		a.checkFailedSources(srcs, st, sterr),
 		a.checkInstallDir(),
 		a.checkInstalledFiles(st, sterr),
 		a.checkFrontmatter(st, sterr),
@@ -290,24 +290,29 @@ func (a *App) checkUpdates(srcs []Source, st *State, shas map[string]string, ste
 	return checkResult{statusOK, label, "All sources are up to date"}
 }
 
-func (a *App) checkUnpulled(srcs []Source, st *State, sterr error) checkResult {
-	const label = "Unpulled sources"
+func (a *App) checkFailedSources(srcs []Source, st *State, sterr error) checkResult {
+	const label = "Failed sources"
 	if sterr != nil {
 		return checkResult{statusNA, label, "State is unreadable"}
 	}
 	if len(srcs) == 0 {
 		return checkResult{statusNA, label, "No sources configured"}
 	}
-	never := 0
+	// A source is "failed" here if it produced no installed files - either it was
+	// never pulled (no state) or its pull matched nothing (empty file list). A
+	// source whose files were installed and later went missing is a different
+	// problem, reported by the "Pulled files" check.
+	bad := 0
 	for _, s := range srcs {
-		if _, ok := st.Sources[s.ID()]; !ok {
-			never++
+		ss, ok := st.Sources[s.ID()]
+		if !ok || len(ss.Files) == 0 {
+			bad++
 		}
 	}
-	if never > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d never pulled. Run source pull", never, len(srcs))}
+	if bad > 0 {
+		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d produced no files. Run source pull (check the --path if it persists)", bad, len(srcs))}
 	}
-	return checkResult{statusOK, label, "Every source has been pulled"}
+	return checkResult{statusOK, label, "Every source produced files"}
 }
 
 func (a *App) checkInstallDir() checkResult {
