@@ -517,7 +517,9 @@ func (a *App) renderDoctorTable(w io.Writer, results []checkResult, isTTY bool, 
 	padRight := tableprinter.WithPadding(text.PadRight)
 	tp := tableprinter.New(w, isTTY, width)
 	if isTTY {
-		tp.AddField("", tableprinter.WithColor(cs.Header))
+		// Empty status-column header, unstyled so the icon column has no
+		// underline (the labeled headers keep theirs).
+		tp.AddField("")
 		tp.AddField("CHECK", tableprinter.WithColor(cs.Header), padRight)
 		tp.AddField("NOTE", tableprinter.WithColor(cs.Header), padRight)
 		tp.EndRow()

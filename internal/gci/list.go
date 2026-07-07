@@ -116,10 +116,9 @@ func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, c
 
 	tp := tableprinter.New(w, isTTY, width)
 	if isTTY {
-		// Empty state-column header: the tableprinter pads it to the column
-		// width (one space) and the color underlines it, giving a single-space
-		// underline like `gh pr checks`.
-		tp.AddField("", tableprinter.WithColor(cs.Header))
+		// Empty state-column header, left unstyled so the icon column has no
+		// underline (the labeled headers keep theirs).
+		tp.AddField("")
 		tp.AddField("SLUG", tableprinter.WithColor(cs.Header), padRight)
 		tp.AddField("REPOSITORY", tableprinter.WithColor(cs.Header), padRight)
 		tp.AddField("REF", tableprinter.WithColor(cs.Header), padRight)
