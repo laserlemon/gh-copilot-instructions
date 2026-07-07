@@ -213,7 +213,7 @@ func (a *App) checkSources(srcs []Source, origin ConfigOrigin, err error) checkR
 		return checkResult{statusFail, label, fmt.Sprintf("Couldn't read your sources (%v)", err)}
 	}
 	if origin == OriginNone || len(srcs) == 0 {
-		return checkResult{statusWarn, label, "None. Add one: gh copilot-instructions source add <owner/repo>"}
+		return checkResult{statusWarn, label, "None. Run source add <owner/repo>"}
 	}
 	where := "configuration file"
 	if origin == OriginEnv {
@@ -262,7 +262,7 @@ func (a *App) checkReachable(srcs []Source, shas map[string]string) checkResult 
 	if len(unreachable) == 0 {
 		return checkResult{statusOK, label, "Every source is reachable on GitHub"}
 	}
-	return checkResult{statusFail, label, fmt.Sprintf("%d of %d unreachable: %s. Check the repo, ref, and your access", len(unreachable), len(srcs), strings.Join(dedupe(unreachable), ", "))}
+	return checkResult{statusFail, label, fmt.Sprintf("%d of %d sources unreachable: %s. Check the repo, ref, and your access", len(unreachable), len(srcs), strings.Join(dedupe(unreachable), ", "))}
 }
 
 func (a *App) checkUpdates(srcs []Source, st *State, shas map[string]string, sterr error) checkResult {
@@ -310,7 +310,7 @@ func (a *App) checkFailedSources(srcs []Source, st *State, sterr error) checkRes
 		}
 	}
 	if bad > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d produced no files. Run source pull (check the --path if it persists)", bad, len(srcs))}
+		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d sources produced no files. Run source pull (check the --path if it persists)", bad, len(srcs))}
 	}
 	return checkResult{statusOK, label, "Every source produced instructions files"}
 }
@@ -347,7 +347,7 @@ func dirWritable(dir string) bool {
 func (a *App) checkInstalledFiles(st *State, sterr error) checkResult {
 	const label = "Pulled files"
 	if sterr != nil {
-		return checkResult{statusFail, label, fmt.Sprintf("state.json is unreadable (%v). Run source pull", sterr)}
+		return checkResult{statusFail, label, fmt.Sprintf("Couldn't read state.json (%v). Run source pull", sterr)}
 	}
 	recorded := map[string]bool{}
 	total, missing := 0, 0
@@ -364,10 +364,10 @@ func (a *App) checkInstalledFiles(st *State, sterr error) checkResult {
 		return checkResult{statusNA, label, "Nothing pulled yet"}
 	}
 	if missing > 0 {
-		return checkResult{statusFail, label, fmt.Sprintf("%d of %d files missing. Run source pull", missing, total)}
+		return checkResult{statusFail, label, fmt.Sprintf("%d of %d instructions files missing. Run source pull", missing, total)}
 	}
 	if orphans := a.orphanFiles(recorded); len(orphans) > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("%s not owned by any source. Run source pull, or delete them", plur(len(orphans), "file is", "files are"))}
+		return checkResult{statusWarn, label, fmt.Sprintf("%s not owned by any source. Run source pull or delete them", plur(len(orphans), "instructions file is", "instructions files are"))}
 	}
 	return checkResult{statusOK, label, fmt.Sprintf("Every instructions file is present (%s)", plur(total, "instructions file", "instructions files"))}
 }
@@ -394,7 +394,7 @@ func (a *App) checkFrontmatter(st *State, sterr error) checkResult {
 		return checkResult{statusNA, label, "No files installed"}
 	}
 	if noApply > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d files have no applyTo (VS Code won't auto-apply them)", noApply, checked)}
+		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d instructions files have no applyTo (VS Code won't auto-apply them)", noApply, checked)}
 	}
 	return checkResult{statusOK, label, fmt.Sprintf("Every instructions file declares applyTo (%s)", plur(checked, "instructions file", "instructions files"))}
 }
@@ -440,9 +440,9 @@ func (a *App) checkVSCode() checkResult {
 	if outOfSync > 0 {
 		return checkResult{statusWarn, label, "Out of date. Run source pull to re-sync them"}
 	}
-	note := fmt.Sprintf("Synchronized (%s)", plur(files, "file", "files"))
+	note := fmt.Sprintf("Synchronized (%s)", plur(files, "instructions file", "instructions files"))
 	if len(dirs) > 1 {
-		note = fmt.Sprintf("Synchronized (%s across %s)", plur(files, "file", "files"), plur(len(dirs), "VS Code install", "VS Code installs"))
+		note = fmt.Sprintf("Synchronized (%s across %s)", plur(files, "instructions file", "instructions files"), plur(len(dirs), "VS Code install", "VS Code installs"))
 	}
 	return checkResult{statusOK, label, note}
 }
