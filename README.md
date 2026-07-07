@@ -27,10 +27,10 @@ or restart the desktop app to pick up changes).
 
 ```
 gh copilot-instructions                                                    # list sources (or show help on a fresh install)
-gh copilot-instructions source add <owner/repo[@ref][:path]> [--ref REF] [--path P] [--token T]
+gh copilot-instructions source add [<owner/repo> | <blob-url>] [--ref REF] [--path P] [--token T]
 gh copilot-instructions source pull [<id | owner/repo>]                     # pull all configured sources, or just one
 gh copilot-instructions source list [--raw]                                 # show sources and their pulled state
-gh copilot-instructions source remove <slug | owner/repo[@ref][:path]>       # remove one source and prune its files
+gh copilot-instructions source remove [<owner/repo> | <blob-url> | <slug>]  # remove one source and prune its files
 gh copilot-instructions source remove --all                                 # remove every source, all installed files, and config
 gh copilot-instructions auto-pull [status]                                  # show whether scheduled pulling is enabled
 gh copilot-instructions auto-pull enable [--every hour|day|week|Nh|Nd|Nw]   # schedule background pulls (default: day)
@@ -46,9 +46,9 @@ your sources once any are configured, and shows help on a fresh install.
 Every command accepts `--json` for machine-readable output. On a terminal the JSON is pretty-printed
 and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly into `jq`.
 
-- **`source add`** takes a positional spec, the equivalent flags, or a mix (a flag overrides the
-  matching part of the spec). A glob `path` must be quoted. Paths are repo-root-relative (a leading `/`
-  is fine).
+- **`source add`** takes an `owner/repo` with optional `--ref`/`--path`, or a **GitHub blob URL**
+  (which carries its own ref and path, so `--ref`/`--path` are ignored). A glob `path` must be quoted
+  and is repo-root-relative (a leading `/` is fine).
 - **`source pull`** is incremental: it resolves each source's current commit SHA and **skips** any
   source that's already up to date (and self-heals if installed files go missing).
 - **`source list`** prints an aligned table on a terminal and tab-separated values when piped. The
@@ -56,8 +56,8 @@ and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly i
   last pull matched no files or its installed files are missing). Use `--json` for structured output,
   or `--raw` to print the sources in config-file format (one per line, with any inline tokens) — ready
   to paste into the multiline `GH_COPILOT_INSTRUCTIONS` Codespaces secret.
-- **`source remove`** identifies a source the same way `source add` does — an `owner/repo[@ref][:path]`
-  spec, a GitHub blob URL, or `--ref`/`--path` flags — or by its **slug** (the `SLUG` column
+- **`source remove`** identifies a source the same way `source add` does — an `owner/repo` (optionally
+  with `--ref`/`--path`) or a GitHub blob URL — or by its **slug** (the `SLUG` column
   of `source list`). `source remove` / `source remove --all` only ever delete files this tool installed
   (they live under the `~/.copilot/instructions/gh-copilot-instructions/` directory) — your own
   hand-written instruction files are never touched.
@@ -75,6 +75,10 @@ A **source** is one line: `owner/repo[@ref][:path]` with an optional trailing to
   the repo). Matched files are copied **verbatim**.
 - The trailing token (last whitespace-separated field) is only needed for a private source when your
   `gh` auth can't read it (e.g. in Codespaces).
+
+That compact `owner/repo[@ref][:path]` form is the **config-file / secret line format**. On the command
+line, `source add` instead takes `owner/repo` with `--ref`/`--path` flags (or a GitHub blob URL) — see
+[Commands](#commands).
 
 You can also `add` a **GitHub blob URL** and it's normalized to the same source — handy for copy-paste
 from the browser:

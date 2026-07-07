@@ -25,8 +25,11 @@ func main() {
 	}
 }
 
+// jsonOut is bound to the persistent --json flag on the root command, so every
+// command inherits a single --json (shown under INHERITED FLAGS on subcommands).
+var jsonOut bool
+
 func rootCmd() *cobra.Command {
-	var asJSON bool
 	root := &cobra.Command{
 		Use:   "copilot-instructions <command> <subcommand> [flags]",
 		Short: "Sync your Copilot custom instructions to every coding surface",
@@ -45,13 +48,13 @@ func rootCmd() *cobra.Command {
 		// full command overview instead of an empty table. --json always lists
 		// (emitting [] when empty) so scripts get machine-readable output.
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !asJSON && !sourcesConfigured() {
+			if !jsonOut && !sourcesConfigured() {
 				return cmd.Help()
 			}
-			return runList(asJSON, false)
+			return runList(jsonOut, false)
 		},
 	}
-	root.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
+	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "Output JSON")
 	// Canonical command groups.
 	root.AddCommand(sourceCmd(), fileCmd(), autoPullCmd())
 	// Hidden top-level aliases keep common commands reachable under short names
@@ -72,7 +75,6 @@ func rootCmd() *cobra.Command {
 // sourceCmd is the `source` group: manage the configured instruction sources.
 // Bare `source` defaults to `list`.
 func sourceCmd() *cobra.Command {
-	var asJSON bool
 	c := &cobra.Command{
 		Use:   "source <command> [flags]",
 		Short: "Manage instruction sources",
@@ -85,10 +87,9 @@ func sourceCmd() *cobra.Command {
 			$ gh copilot-instructions source pull`),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runList(asJSON, false)
+			return runList(jsonOut, false)
 		},
 	}
-	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	c.AddCommand(listCmd(), addCmd(), removeCmd(), pullCmd())
 	return c
 }
@@ -96,7 +97,6 @@ func sourceCmd() *cobra.Command {
 // fileCmd is the `file` group: inspect the installed instruction files. Bare
 // `file` defaults to `list`.
 func fileCmd() *cobra.Command {
-	var asJSON bool
 	c := &cobra.Command{
 		Use:   "file <command> [flags]",
 		Short: "Show pulled instruction files",
@@ -107,19 +107,17 @@ func fileCmd() *cobra.Command {
 			$ gh copilot-instructions file list
 
 			# The absolute path of every installed file, for scripting
-			$ gh copilot-instructions file list --json | jq -r '.[].path'`),
+			$ gh copilot-instructions file list --json | jq -r '.[].localPath'`),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return newApp().RenderFileList(asJSON)
+			return newApp().RenderFileList(jsonOut)
 		},
 	}
-	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	c.AddCommand(fileListCmd())
 	return c
 }
 
 func fileListCmd() *cobra.Command {
-	var asJSON bool
 	c := &cobra.Command{
 		Use:   "list",
 		Short: "List all pulled instruction files",
@@ -130,13 +128,12 @@ func fileListCmd() *cobra.Command {
 			$ gh copilot-instructions file list
 
 			# Machine-readable output
-			$ gh copilot-instructions file list --json | jq -r '.[].file'`),
+			$ gh copilot-instructions file list --json | jq -r '.[].remotePath'`),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return newApp().RenderFileList(asJSON)
+			return newApp().RenderFileList(jsonOut)
 		},
 	}
-	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	return c
 }
 
@@ -170,47 +167,45 @@ func newApp() *gci.App { return gci.New(os.Stdout, os.Stderr) }
 
 func addCmd() *cobra.Command {
 	var ref, path, token string
-	var asJSON bool
 	c := &cobra.Command{
-		Use:   "add [<owner/repo[@ref][:path]>]",
+		Use:   "add [<owner/repo> | <blob-url>]",
 		Short: "Add a source and pull it",
-		Long: "Add a source, then pull. Give the source as an owner/repo[@ref][:path]\n" +
-			"spec or a GitHub blob URL; --ref and --path override the matching part\n" +
-			"of the spec, and a glob must be quoted.\n\n" +
+		Long: "Add a source, then pull. Give the source as OWNER/REPO or a GitHub blob\n" +
+			"URL. With OWNER/REPO, --ref and --path select a ref and a path within the\n" +
+			"repository; a blob URL already carries its ref and path, so those flags\n" +
+			"are ignored. Quote a glob path.\n\n" +
 			"Your gh auth is used by default. If gh cannot access a repository, you may\n" +
 			"provide a personal access token (with permission to read repository\n" +
 			"contents) using --token.",
 		Example: heredoc(`
-			# Add a source by owner/repo (default branch, default path)
-			$ gh copilot-instructions add github/team-instructions
+			# Add a source by owner/repo (default branch, default path: **/*.instructions.md)
+			$ gh copilot-instructions source add acme/team-instructions
 
 			# Pin a ref and select a path within the repository
-			$ gh copilot-instructions add github/team-instructions@main:instructions
+			$ gh copilot-instructions source add acme/team-instructions --ref main --path 'instructions/*.md'
 
-			# Add a private source with an access token
-			$ gh copilot-instructions add acme/private-instructions --token ghp_...`),
+			# Add a specific GitHub blob source
+			$ gh copilot-instructions source add https://github.com/acme/team-instructions/blob/main/style.instructions.md`),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			spec := ""
+			arg := ""
 			if len(args) == 1 {
-				spec = args[0]
+				arg = args[0]
 			}
-			s, err := buildSource(spec, ref, path, token)
+			s, err := buildSource(arg, ref, path, token)
 			if err != nil {
 				return err
 			}
-			return newApp().Add(s, asJSON)
+			return newApp().Add(s, jsonOut)
 		},
 	}
 	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
 	c.Flags().StringVar(&path, "path", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
-	c.Flags().StringVar(&token, "token", "", "Personal access token (read repository contents) for when gh cannot access a repository")
-	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
+	c.Flags().StringVar(&token, "token", "", "Personal access token (read repository contents) for repositories that gh cannot access")
 	return c
 }
 
 func pullCmd() *cobra.Command {
-	var asJSON bool
 	c := &cobra.Command{
 		Use:   "pull [<id | owner/repo>]",
 		Short: "Pull one or all sources",
@@ -233,15 +228,14 @@ func pullCmd() *cobra.Command {
 			if len(args) == 1 {
 				filter = args[0]
 			}
-			return newApp().Pull(filter, asJSON)
+			return newApp().Pull(filter, jsonOut)
 		},
 	}
-	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	return c
 }
 
 func listCmd() *cobra.Command {
-	var asJSON, raw bool
+	var raw bool
 	c := &cobra.Command{
 		Use:   "list",
 		Short: "List all sources and their states",
@@ -257,35 +251,34 @@ func listCmd() *cobra.Command {
 			$ gh copilot-instructions source list --raw
 
 			# Machine-readable output for scripting
-			$ gh copilot-instructions source list --json | jq -r '.[].repo'`),
+			$ gh copilot-instructions source list --json | jq -r '.[].repository'`),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runList(asJSON, raw)
+			return runList(jsonOut, raw)
 		},
 	}
 	c.Flags().BoolVar(&raw, "raw", false, "Output config-file lines to paste into a Codespaces secret")
-	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	return c
 }
 
 func removeCmd() *cobra.Command {
 	var ref, path string
-	var all, asJSON bool
+	var all bool
 	c := &cobra.Command{
-		Use:   "remove [<slug | owner/repo[@ref][:path]>]",
+		Use:   "remove [<owner/repo> | <blob-url> | <slug>]",
 		Short: "Remove one source and its files, or --all",
 		Long: "Remove one configured source and prune the files it installed, or use\n" +
 			"--all to remove every source, all installed files, and the local config.\n\n" +
-			"Identify the source the way you added it: an owner/repo[@ref][:path] spec,\n" +
-			"a GitHub blob URL, or the equivalent --ref/--path flags. You can also pass\n" +
-			"a source's slug from the SLUG column of the list output.\n\n" +
+			"Identify the source the way you added it: OWNER/REPO (optionally with\n" +
+			"--ref/--path), a GitHub blob URL, or its slug (the SLUG column of the\n" +
+			"list output).\n\n" +
 			"With --json, the remaining sources are reported (like list --json).",
 		Example: heredoc(`
 			# Remove a source by owner/repo
 			$ gh copilot-instructions source remove github/team-instructions
 
 			# Remove a specific ref/path variant (the way it was added)
-			$ gh copilot-instructions source remove github/team-instructions@main:instructions
+			$ gh copilot-instructions source remove github/team-instructions --ref main --path instructions
 
 			# Remove by slug, from the SLUG column of the list output
 			$ gh copilot-instructions source remove a1b2c3d4
@@ -295,40 +288,40 @@ func removeCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app := newApp()
-			spec := ""
+			arg := ""
 			if len(args) == 1 {
-				spec = args[0]
+				arg = args[0]
 			}
 			if all {
-				if spec != "" || ref != "" || path != "" {
+				if arg != "" || ref != "" || path != "" {
 					return fmt.Errorf("--all takes no other arguments")
 				}
-				return app.RemoveAll(asJSON)
+				return app.RemoveAll(jsonOut)
 			}
-			// A spec/URL or --ref/--path builds the exact source, the same way add
-			// identifies it; a bare token is treated as a slug.
-			if ref != "" || path != "" || strings.Contains(spec, "/") {
-				s, err := buildRemoveTarget(spec, ref, path)
+			if arg == "" {
+				return fmt.Errorf("specify OWNER/REPO, a GitHub blob URL, or a slug to remove, or use --all")
+			}
+			// OWNER/REPO and blob URLs contain a slash; a slug never does.
+			if strings.Contains(arg, "/") {
+				s, err := buildRemoveTarget(arg, ref, path)
 				if err != nil {
 					return err
 				}
-				return app.Remove(s.Spec(), asJSON)
+				return app.Remove(s.Spec(), jsonOut)
 			}
-			if spec == "" {
-				return fmt.Errorf("specify a slug, owner/repo[@ref][:path], or a GitHub URL to remove, or use --all")
+			if ref != "" || path != "" {
+				return fmt.Errorf("--ref and --path apply to OWNER/REPO, not a slug")
 			}
-			return app.Remove(spec, asJSON)
+			return app.Remove(arg, jsonOut)
 		},
 	}
 	c.Flags().StringVar(&ref, "ref", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
 	c.Flags().StringVar(&path, "path", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
 	c.Flags().BoolVar(&all, "all", false, "Remove every source, all installed files, and config")
-	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	return c
 }
 
 func autoPullCmd() *cobra.Command {
-	var asJSON bool
 	c := &cobra.Command{
 		Use:   "auto-pull <command> [flags]",
 		Short: "Toggle automatic pulling of all sources",
@@ -351,10 +344,9 @@ func autoPullCmd() *cobra.Command {
 			$ gh copilot-instructions auto-pull disable`),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return newApp().AutoPullStatus(asJSON)
+			return newApp().AutoPullStatus(jsonOut)
 		},
 	}
-	c.PersistentFlags().BoolVar(&asJSON, "json", false, "Output JSON")
 
 	var every string
 	enable := &cobra.Command{
@@ -368,7 +360,7 @@ func autoPullCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return newApp().AutoPullEnable(cadence, asJSON)
+			return newApp().AutoPullEnable(cadence, jsonOut)
 		},
 	}
 	enable.Flags().StringVar(&every, "every", gci.DefaultEvery, "Cadence: hour, day, or week (with h/d/w shorthands and a count, e.g. 3h, 2d, 1w)")
@@ -378,7 +370,7 @@ func autoPullCmd() *cobra.Command {
 		Short: "Disable scheduled background pulling",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return newApp().AutoPullDisable(asJSON)
+			return newApp().AutoPullDisable(jsonOut)
 		},
 	}
 
@@ -387,7 +379,7 @@ func autoPullCmd() *cobra.Command {
 		Short: "Show whether auto-pull is enabled and its cadence",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return newApp().AutoPullStatus(asJSON)
+			return newApp().AutoPullStatus(jsonOut)
 		},
 	}
 
@@ -412,54 +404,57 @@ func heredoc(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// buildSource combines an optional positional spec with flag overrides. It uses
-// ResolveSpec so an ambiguous GitHub blob URL (a slashed branch name) is
-// disambiguated against the API, matching how add stores the source.
-func buildSource(spec, ref, path, token string) (gci.Source, error) {
-	var base gci.Source
-	if spec != "" {
-		parsed, err := newApp().ResolveSpec(spec)
+// buildSource builds a source for `add` from a positional argument plus flags.
+// The argument is either a GitHub blob URL - which carries its own ref and path,
+// so --ref/--path are ignored and ResolveSpec disambiguates a slashed branch
+// name against the API - or a bare OWNER/REPO, whose ref and path come from the
+// flags. (Gist support will slot in here as another recognized form.)
+func buildSource(arg, ref, path, token string) (gci.Source, error) {
+	if gci.IsGitHubURL(arg) {
+		s, err := newApp().ResolveSpec(arg)
 		if err != nil {
-			return base, err
+			return s, err
 		}
-		base = parsed
+		if token != "" {
+			s.Token = token
+		}
+		return s, nil
 	}
-	return mergeSource(base, ref, path, token)
+	s, err := gci.ParseRepo(arg)
+	if err != nil {
+		return s, err
+	}
+	applyRefPath(&s, ref, path)
+	if token != "" {
+		s.Token = token
+	}
+	return s, nil
 }
 
-// buildRemoveTarget builds the source to remove from an optional spec plus flag
-// overrides. Unlike buildSource it resolves offline (ParseSpec), because remove
-// only needs to identify an already-configured source and must never require the
-// network; the slug is the escape hatch for the rare slashed-ref blob URL.
-func buildRemoveTarget(spec, ref, path string) (gci.Source, error) {
-	var base gci.Source
-	if spec != "" {
-		parsed, err := gci.ParseSpec(spec)
-		if err != nil {
-			return base, err
-		}
-		base = parsed
+// buildRemoveTarget builds the source to remove from a positional argument plus
+// flags. Like buildSource it accepts a blob URL or a bare OWNER/REPO, but it
+// resolves offline (ParseSpec), because remove only needs to identify an
+// already-configured source and must never require the network; the slug is the
+// escape hatch for the rare slashed-ref blob URL.
+func buildRemoveTarget(arg, ref, path string) (gci.Source, error) {
+	if gci.IsGitHubURL(arg) {
+		return gci.ParseSpec(arg) // ref/path flags ignored for a URL
 	}
-	return mergeSource(base, ref, path, "")
+	s, err := gci.ParseRepo(arg)
+	if err != nil {
+		return s, err
+	}
+	applyRefPath(&s, ref, path)
+	return s, nil
 }
 
-// mergeSource applies flag overrides onto a parsed base source and validates it.
-func mergeSource(base gci.Source, ref, path, token string) (gci.Source, error) {
-	s := base
+// applyRefPath overlays the --ref/--path flag values onto a source (a leading
+// slash on the path is trimmed). Empty values leave the source unchanged.
+func applyRefPath(s *gci.Source, ref, path string) {
 	if ref != "" {
 		s.Ref = ref
 	}
 	if path != "" {
 		s.Path = strings.TrimPrefix(path, "/")
 	}
-	if token != "" {
-		s.Token = token
-	}
-	if s.Repo == "" {
-		return s, fmt.Errorf("a source is required: pass owner/repo[@ref][:path] or a GitHub blob URL")
-	}
-	if _, err := gci.ParseSpec(s.Repo); err != nil {
-		return s, err
-	}
-	return s, nil
 }

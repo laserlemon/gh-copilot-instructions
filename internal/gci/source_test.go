@@ -306,3 +306,52 @@ func TestTargetMatches(t *testing.T) {
 		t.Error("full spec should match its exact coordinates")
 	}
 }
+
+func TestIsGitHubURL(t *testing.T) {
+	yes := []string{
+		"https://github.com/o/r/blob/main/x.md",
+		"http://github.com/o/r",
+		"github.com/o/r/blob/main/x.md",
+		"  github.com/o/r  ",
+	}
+	for _, s := range yes {
+		if !IsGitHubURL(s) {
+			t.Errorf("IsGitHubURL(%q) = false, want true", s)
+		}
+	}
+	no := []string{"o/r", "owner/repo", "", "gitlab.com/o/r", "abcd1234"}
+	for _, s := range no {
+		if IsGitHubURL(s) {
+			t.Errorf("IsGitHubURL(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestParseRepo(t *testing.T) {
+	// Bare owner/repo parses to just the repo (no ref/path).
+	s, err := ParseRepo("owner/repo")
+	if err != nil {
+		t.Fatalf("ParseRepo(owner/repo): %v", err)
+	}
+	if s.Repo != "owner/repo" || s.Ref != "" || s.Path != "" {
+		t.Fatalf("ParseRepo(owner/repo) = %+v, want just Repo", s)
+	}
+	// Leading/trailing space is tolerated.
+	if s, err := ParseRepo("  owner/repo "); err != nil || s.Repo != "owner/repo" {
+		t.Fatalf("ParseRepo(spaces) = %+v, %v", s, err)
+	}
+	// The dropped spec/URL forms are rejected.
+	for _, bad := range []string{
+		"owner/repo@main",
+		"owner/repo:path",
+		"owner/repo@main:path",
+		"https://github.com/o/r/blob/main/x.md",
+		"owner",
+		"a/b/c",
+		"",
+	} {
+		if _, err := ParseRepo(bad); err == nil {
+			t.Errorf("ParseRepo(%q) should error", bad)
+		}
+	}
+}
