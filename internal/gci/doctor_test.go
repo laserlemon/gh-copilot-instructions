@@ -94,7 +94,7 @@ func TestDoctorHealthy(t *testing.T) {
 	mustCheck(t, res, "Sources file permissions", statusOK)
 	mustCheck(t, res, "Source reachability", statusOK)
 	mustCheck(t, res, "Install directory", statusOK)
-	mustCheck(t, res, "Installed files", statusOK)
+	mustCheck(t, res, "Pulled files", statusOK)
 
 	if _, _, fail := tally(res); fail != 0 {
 		t.Fatalf("healthy setup reported failures: %+v", res)
@@ -115,7 +115,7 @@ func TestDoctorMissingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := a.diagnose()
-	mustCheck(t, res, "Installed files", statusFail)
+	mustCheck(t, res, "Pulled files", statusFail)
 	if _, _, fail := tally(res); fail == 0 {
 		t.Fatal("missing files should fail the run")
 	}
@@ -129,7 +129,7 @@ func TestDoctorOrphanFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := a.diagnose()
-	mustCheck(t, res, "Installed files", statusWarn)
+	mustCheck(t, res, "Pulled files", statusWarn)
 }
 
 func TestDoctorUnreachable(t *testing.T) {

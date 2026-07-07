@@ -187,7 +187,7 @@ func (a *App) checkSources(srcs []Source, origin ConfigOrigin, err error) checkR
 }
 
 func (a *App) checkEnvOverride() checkResult {
-	const label = "Environment override"
+	const label = "Configuration override"
 	if !EnvSet() {
 		return checkResult{statusNA, label, "GH_COPILOT_INSTRUCTIONS is not set"}
 	}
@@ -241,7 +241,7 @@ func (a *App) checkReachable(srcs []Source, shas map[string]string) checkResult 
 		shas[s.ID()] = sha
 	}
 	if len(unreachable) == 0 {
-		return checkResult{statusOK, label, fmt.Sprintf("All %s reachable on GitHub", plur(len(srcs), "source is", "sources are"))}
+		return checkResult{statusOK, label, "Every source is reachable on GitHub"}
 	}
 	return checkResult{statusFail, label, fmt.Sprintf("%d of %d unreachable: %s. Check the repo, ref, and your access", len(unreachable), len(srcs), strings.Join(dedupe(unreachable), ", "))}
 }
@@ -288,31 +288,40 @@ func (a *App) checkUnpulled(srcs []Source, st *State, sterr error) checkResult {
 	if never > 0 {
 		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d never pulled. Run source pull", never, len(srcs))}
 	}
-	return checkResult{statusOK, label, "All sources have been pulled"}
+	return checkResult{statusOK, label, "Every source has been pulled"}
 }
 
 func (a *App) checkInstallDir() checkResult {
 	const label = "Install directory"
-	dir := a.Paths.InstallDir
-	fi, err := os.Stat(dir)
+	managed := filepath.Join(a.Paths.InstallDir, FileDir)
+	disp := abbrevHome(managed)
+	fi, err := os.Stat(managed)
 	if os.IsNotExist(err) {
-		return checkResult{statusWarn, label, "Doesn't exist yet (nothing pulled). Run source pull"}
+		return checkResult{statusNA, label, disp + " doesn't exist yet (nothing pulled)"}
 	}
 	if err != nil || !fi.IsDir() {
-		return checkResult{statusFail, label, fmt.Sprintf("Not usable: %s. Check permissions on ~/.copilot", abbrevHome(dir))}
+		return checkResult{statusFail, label, disp + " is not usable. Check permissions on ~/.copilot"}
 	}
+	if !dirWritable(managed) {
+		return checkResult{statusFail, label, disp + " is not writable. Check its permissions"}
+	}
+	return checkResult{statusOK, label, disp + " is writable"}
+}
+
+// dirWritable reports whether a regular file can be created in dir.
+func dirWritable(dir string) bool {
 	probe := filepath.Join(dir, ".gci-doctor-write-test")
 	f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return checkResult{statusFail, label, fmt.Sprintf("Not writable: %s", abbrevHome(dir))}
+		return false
 	}
 	f.Close()
 	os.Remove(probe)
-	return checkResult{statusOK, label, fmt.Sprintf("Present and writable (%s)", abbrevHome(dir))}
+	return true
 }
 
 func (a *App) checkInstalledFiles(st *State, sterr error) checkResult {
-	const label = "Installed files"
+	const label = "Pulled files"
 	if sterr != nil {
 		return checkResult{statusFail, label, fmt.Sprintf("state.json is unreadable (%v). Run source pull", sterr)}
 	}
@@ -328,15 +337,15 @@ func (a *App) checkInstalledFiles(st *State, sterr error) checkResult {
 		}
 	}
 	if total == 0 {
-		return checkResult{statusNA, label, "Nothing installed yet"}
+		return checkResult{statusNA, label, "Nothing pulled yet"}
 	}
 	if missing > 0 {
-		return checkResult{statusFail, label, fmt.Sprintf("%d of %d missing. Run source pull", missing, total)}
+		return checkResult{statusFail, label, fmt.Sprintf("%d of %d files missing. Run source pull", missing, total)}
 	}
 	if orphans := a.orphanFiles(recorded); len(orphans) > 0 {
 		return checkResult{statusWarn, label, fmt.Sprintf("%s not owned by any source. Run source pull, or delete them", plur(len(orphans), "file is", "files are"))}
 	}
-	return checkResult{statusOK, label, fmt.Sprintf("All %d present", total)}
+	return checkResult{statusOK, label, fmt.Sprintf("Every file is present (%s)", plur(total, "file", "files"))}
 }
 
 func (a *App) checkFrontmatter(st *State, sterr error) checkResult {
@@ -363,16 +372,16 @@ func (a *App) checkFrontmatter(st *State, sterr error) checkResult {
 	if noApply > 0 {
 		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d files have no applyTo (VS Code won't auto-apply them)", noApply, checked)}
 	}
-	return checkResult{statusOK, label, fmt.Sprintf("All %d files declare applyTo", checked)}
+	return checkResult{statusOK, label, fmt.Sprintf("Every file declares applyTo (%s)", plur(checked, "file", "files"))}
 }
 
 func (a *App) checkLeftoverState(srcs []Source, st *State, sterr error) checkResult {
-	const label = "Leftover state"
+	const label = "Removed sources"
 	if sterr != nil {
 		return checkResult{statusNA, label, "State is unreadable"}
 	}
 	if len(st.Sources) == 0 {
-		return checkResult{statusNA, label, "No state recorded yet"}
+		return checkResult{statusNA, label, "No sources have been pulled"}
 	}
 	configured := map[string]bool{}
 	for _, s := range srcs {
@@ -385,9 +394,9 @@ func (a *App) checkLeftoverState(srcs []Source, st *State, sterr error) checkRes
 		}
 	}
 	if stale > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("%s left from removed sources. Run source pull to reconcile", plur(stale, "entry", "entries"))}
+		return checkResult{statusWarn, label, fmt.Sprintf("%s pulled but no longer in your config; the files remain. Run source remove <slug>", plur(stale, "source was", "sources were"))}
 	}
-	return checkResult{statusOK, label, "None"}
+	return checkResult{statusOK, label, "None linger from deleted sources"}
 }
 
 func (a *App) checkVSCode() checkResult {
@@ -397,6 +406,7 @@ func (a *App) checkVSCode() checkResult {
 		return checkResult{statusNA, label, "VS Code isn't installed"}
 	}
 	src := filepath.Join(a.Paths.InstallDir, FileDir)
+	files := len(fileDigests(src))
 	outOfSync := 0
 	for _, d := range dirs {
 		if !treesEqual(src, filepath.Join(d, FileDir)) {
@@ -404,9 +414,13 @@ func (a *App) checkVSCode() checkResult {
 		}
 	}
 	if outOfSync > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("Out of sync in %s. Run source pull", plur(outOfSync, "directory", "directories"))}
+		return checkResult{statusWarn, label, "Out of date. Run source pull to re-sync them"}
 	}
-	return checkResult{statusOK, label, fmt.Sprintf("In sync (%s)", plur(len(dirs), "directory", "directories"))}
+	note := fmt.Sprintf("Synchronized (%s)", plur(files, "file", "files"))
+	if len(dirs) > 1 {
+		note = fmt.Sprintf("Synchronized (%s across %s)", plur(files, "file", "files"), plur(len(dirs), "VS Code install", "VS Code installs"))
+	}
+	return checkResult{statusOK, label, note}
 }
 
 func (a *App) checkCodespaces() checkResult {
