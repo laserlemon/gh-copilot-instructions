@@ -199,7 +199,7 @@ func addCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVarP(&ref, "ref", "r", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
-	c.Flags().StringVarP(&path, "path", "p", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
+	c.Flags().StringVarP(&path, "path", "p", "", "Glob, file, or directory within the repository (default \"**/*.instructions.md\")")
 	c.Flags().StringVarP(&token, "token", "t", "", "Personal access token (read repository contents) for repositories that gh cannot access")
 	return c
 }
@@ -305,7 +305,7 @@ func removeCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVarP(&ref, "ref", "r", "", "Branch, tag, or commit SHA (default: the repository's default branch)")
-	c.Flags().StringVarP(&path, "path", "p", "", "Glob, file, or directory within the repository (default: **/*.instructions.md)")
+	c.Flags().StringVarP(&path, "path", "p", "", "Glob, file, or directory within the repository (default \"**/*.instructions.md\")")
 	c.Flags().BoolVar(&all, "all", false, "Remove every source, all installed files, and config")
 	return c
 }
