@@ -63,10 +63,10 @@ func rootCmd() *cobra.Command {
 	// renames it and hides it from help. Keep in sync with topLevelShortcuts,
 	// which documents them in the root help.
 	root.AddCommand(
-		alias("add", addCmd()),
-		alias("pull", pullCmd()),
-		alias("sources", listCmd()),
-		alias("files", fileListCmd()),
+		alias("add", "source add", addCmd()),
+		alias("pull", "source pull", pullCmd()),
+		alias("sources", "source", listCmd()),
+		alias("files", "file", fileListCmd()),
 	)
 	applyGHStyle(root)
 	return root
@@ -99,13 +99,11 @@ func fileCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "file <command> [flags]",
 		Short: "Show pulled instruction files",
-		Long: "List the instruction files installed from your configured sources.",
+		Long: "List every instruction file installed from your configured sources,\n" +
+			"with the source each came from.",
 		Example: heredoc(`
-			# List every installed instruction file and its source
 			$ gh copilot-instructions file list
-
-			# The absolute path of every installed file, for scripting
-			$ gh copilot-instructions file list --json | jq -r '.[].localPath'`),
+			$ gh copilot-instructions file list --json | jq -r '.[].remotePath'`),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return newApp().RenderFileList(jsonOut)
@@ -117,8 +115,9 @@ func fileCmd() *cobra.Command {
 
 func fileListCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "list",
-		Short: "List all pulled instruction files",
+		Use:         "list",
+		Short:       "List all pulled instruction files",
+		Annotations: map[string]string{"helpProxy": "file"},
 		Long: "List every instruction file installed from your configured sources,\n" +
 			"with the source each came from.",
 		Example: heredoc(`
@@ -133,12 +132,17 @@ func fileListCmd() *cobra.Command {
 }
 
 // alias turns a command builder into a hidden top-level alias: it renames the
-// command to `use` (its invocation name) and hides it from help, while keeping
-// its flags, args, and behavior. Used for the shortcuts documented in the root
+// command to `use` (its invocation name), hides it from help, and points its
+// help at the canonical `proxy` command path (so `--help` on the alias renders
+// the same page as its target). Used for the shortcuts documented in the root
 // help's SHORTCUTS section.
-func alias(use string, c *cobra.Command) *cobra.Command {
+func alias(use, proxy string, c *cobra.Command) *cobra.Command {
 	c.Use = use
 	c.Hidden = true
+	if c.Annotations == nil {
+		c.Annotations = map[string]string{}
+	}
+	c.Annotations["helpProxy"] = proxy
 	return c
 }
 
@@ -230,9 +234,10 @@ func pullCmd() *cobra.Command {
 func listCmd() *cobra.Command {
 	var raw bool
 	c := &cobra.Command{
-		Use:   "list",
-		Short: "List all sources and their states",
-		Long:  "List all sources and their states.",
+		Use:         "list",
+		Short:       "List all sources and their states",
+		Long:        "List all sources and their states.",
+		Annotations: map[string]string{"helpProxy": "source"},
 		Example: heredoc(`
 			$ gh copilot-instructions source list
 			$ gh copilot-instructions source list --raw
@@ -357,9 +362,10 @@ func autoPullCmd() *cobra.Command {
 	}
 
 	status := &cobra.Command{
-		Use:   "status",
-		Short: "Show whether auto-pull is enabled and its cadence",
-		Args:  cobra.NoArgs,
+		Use:         "status",
+		Short:       "Show whether auto-pull is enabled and its cadence",
+		Annotations: map[string]string{"helpProxy": "auto-pull"},
+		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return newApp().AutoPullStatus(jsonOut)
 		},

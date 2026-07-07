@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -36,13 +37,55 @@ func applyGHStyle(root *cobra.Command) {
 	root.SetUsageFunc(ghUsage)
 }
 
-// ghHelp prints the full help page (description + usage body).
+// ghHelp prints the full help page (description + usage body). Commands that
+// carry a helpProxy annotation (default subcommands and their aliases) render
+// the help of their canonical command instead, so that, e.g., `file`,
+// `file list`, and `files` all show the exact same page.
 func ghHelp(c *cobra.Command, _ []string) {
+	if t := helpProxyTarget(c); t != nil {
+		c = t
+	}
 	w := c.OutOrStdout()
 	if desc := longOrShort(c); desc != "" {
 		fmt.Fprintf(w, "%s\n\n", desc)
 	}
 	ghUsageBody(w, c)
+}
+
+// helpProxyTarget resolves the command whose help should render in place of c,
+// from c's "helpProxy" annotation (a space-separated command path under the
+// root, e.g. "source" or "source add"). Returns nil when there is no annotation
+// or it resolves to c itself.
+func helpProxyTarget(c *cobra.Command) *cobra.Command {
+	if c == nil || c.Annotations == nil {
+		return nil
+	}
+	path := c.Annotations["helpProxy"]
+	if path == "" {
+		return nil
+	}
+	cur := c.Root()
+	for _, name := range strings.Fields(path) {
+		next := childByName(cur, name)
+		if next == nil {
+			return nil
+		}
+		cur = next
+	}
+	if cur == c {
+		return nil
+	}
+	return cur
+}
+
+// childByName returns c's immediate subcommand with the given name, or nil.
+func childByName(c *cobra.Command, name string) *cobra.Command {
+	for _, s := range c.Commands() {
+		if s.Name() == name {
+			return s
+		}
+	}
+	return nil
 }
 
 // ghUsage prints just the usage body (no description); used when cobra needs a
@@ -53,6 +96,10 @@ func ghUsage(c *cobra.Command) error {
 }
 
 func ghUsageBody(w io.Writer, c *cobra.Command) {
+	// Merge inherited (persistent) flags into c's flag set so UseLine renders a
+	// stable "[flags]" suffix whether or not c was the parsed command (proxied
+	// help targets are not parsed, so their flags would otherwise be unmerged).
+	_ = c.InheritedFlags()
 	fmt.Fprintf(w, "USAGE\n  gh %s\n", c.UseLine())
 
 	if len(c.Aliases) > 0 {
