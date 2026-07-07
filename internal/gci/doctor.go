@@ -146,11 +146,11 @@ func (a *App) diagnose() []checkResult {
 func (a *App) checkAuth(token string) checkResult {
 	const label = "GitHub authentication"
 	if token == "" {
-		return checkResult{statusWarn, label, "Anonymous: public repos only, low rate limit — run gh auth login"}
+		return checkResult{statusWarn, label, "Anonymous: public repos only, low rate limit. Run gh auth login"}
 	}
 	login, err := a.probe().Whoami(token)
 	if err != nil {
-		return checkResult{statusFail, label, "Token is invalid or the API is unreachable — run gh auth login"}
+		return checkResult{statusFail, label, "Token is invalid or the API is unreachable. Run gh auth login"}
 	}
 	return checkResult{statusOK, label, fmt.Sprintf("Authenticated as %s", login)}
 }
@@ -164,9 +164,9 @@ func (a *App) checkRateLimit(token string) checkResult {
 	note := fmt.Sprintf("%d/%d requests remaining", rem, lim)
 	switch {
 	case rem == 0:
-		return checkResult{statusFail, label, "Exhausted — wait for it to reset, or authenticate for a higher limit"}
+		return checkResult{statusFail, label, "Exhausted. Wait for it to reset, or authenticate for a higher limit"}
 	case rem*10 < lim: // under 10% left
-		return checkResult{statusWarn, label, "Running low: " + note + " — authenticate for a higher limit"}
+		return checkResult{statusWarn, label, "Running low: " + note + ". Authenticate for a higher limit"}
 	}
 	return checkResult{statusOK, label, note}
 }
@@ -177,7 +177,7 @@ func (a *App) checkSources(srcs []Source, origin ConfigOrigin, err error) checkR
 		return checkResult{statusFail, label, fmt.Sprintf("Couldn't read your sources (%v)", err)}
 	}
 	if origin == OriginNone || len(srcs) == 0 {
-		return checkResult{statusWarn, label, "None — add one: gh copilot-instructions source add <owner/repo>"}
+		return checkResult{statusWarn, label, "None. Add one: gh copilot-instructions source add <owner/repo>"}
 	}
 	where := "config file"
 	if origin == OriginEnv {
@@ -192,7 +192,7 @@ func (a *App) checkEnvOverride() checkResult {
 		return checkResult{statusNA, label, "GH_COPILOT_INSTRUCTIONS is not set"}
 	}
 	if _, err := os.Stat(a.Paths.SourcesFile); err == nil {
-		return checkResult{statusWarn, label, "GH_COPILOT_INSTRUCTIONS is overriding your sources file — unset it to use the file"}
+		return checkResult{statusWarn, label, "GH_COPILOT_INSTRUCTIONS is overriding your sources file. Unset it to use the file"}
 	}
 	return checkResult{statusOK, label, "GH_COPILOT_INSTRUCTIONS is active (no sources file to shadow)"}
 }
@@ -204,7 +204,7 @@ func (a *App) checkSourcesPerms() checkResult {
 		return checkResult{statusNA, label, "No sources file on disk"}
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("Readable by other users (it can hold tokens) — chmod 600 %s", abbrevHome(a.Paths.SourcesFile))}
+		return checkResult{statusWarn, label, fmt.Sprintf("Readable by other users (it can hold tokens). Run chmod 600 %s", abbrevHome(a.Paths.SourcesFile))}
 	}
 	return checkResult{statusOK, label, "Correct (600)"}
 }
@@ -221,7 +221,7 @@ func (a *App) checkInlineTokens(srcs []Source) checkResult {
 		}
 	}
 	if n > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("%s a token in plain text — prefer gh auth or GH_COPILOT_INSTRUCTIONS_TOKEN", plur(n, "source stores", "sources store"))}
+		return checkResult{statusWarn, label, fmt.Sprintf("%s a token in plain text. Prefer gh auth or GH_COPILOT_INSTRUCTIONS_TOKEN", plur(n, "source stores", "sources store"))}
 	}
 	return checkResult{statusOK, label, "None stored in your config"}
 }
@@ -243,7 +243,7 @@ func (a *App) checkReachable(srcs []Source, shas map[string]string) checkResult 
 	if len(unreachable) == 0 {
 		return checkResult{statusOK, label, fmt.Sprintf("All %s reachable on GitHub", plur(len(srcs), "source is", "sources are"))}
 	}
-	return checkResult{statusFail, label, fmt.Sprintf("%d of %d unreachable: %s — check the repo, ref, and your access", len(unreachable), len(srcs), strings.Join(dedupe(unreachable), ", "))}
+	return checkResult{statusFail, label, fmt.Sprintf("%d of %d unreachable: %s. Check the repo, ref, and your access", len(unreachable), len(srcs), strings.Join(dedupe(unreachable), ", "))}
 }
 
 func (a *App) checkUpdates(srcs []Source, st *State, shas map[string]string, sterr error) checkResult {
@@ -266,7 +266,7 @@ func (a *App) checkUpdates(srcs []Source, st *State, shas map[string]string, ste
 		return checkResult{statusNA, label, "Nothing pulled yet"}
 	}
 	if updates > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d pulled sources have updates — run source pull", updates, pulled)}
+		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d pulled sources have updates. Run source pull", updates, pulled)}
 	}
 	return checkResult{statusOK, label, "Everything is up to date"}
 }
@@ -286,7 +286,7 @@ func (a *App) checkUnpulled(srcs []Source, st *State, sterr error) checkResult {
 		}
 	}
 	if never > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d never pulled — run source pull", never, len(srcs))}
+		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d never pulled. Run source pull", never, len(srcs))}
 	}
 	return checkResult{statusOK, label, "All sources have been pulled"}
 }
@@ -296,10 +296,10 @@ func (a *App) checkInstallDir() checkResult {
 	dir := a.Paths.InstallDir
 	fi, err := os.Stat(dir)
 	if os.IsNotExist(err) {
-		return checkResult{statusWarn, label, "Doesn't exist yet (nothing pulled) — run source pull"}
+		return checkResult{statusWarn, label, "Doesn't exist yet (nothing pulled). Run source pull"}
 	}
 	if err != nil || !fi.IsDir() {
-		return checkResult{statusFail, label, fmt.Sprintf("Not usable: %s — check permissions on ~/.copilot", abbrevHome(dir))}
+		return checkResult{statusFail, label, fmt.Sprintf("Not usable: %s. Check permissions on ~/.copilot", abbrevHome(dir))}
 	}
 	probe := filepath.Join(dir, ".gci-doctor-write-test")
 	f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o600)
@@ -314,7 +314,7 @@ func (a *App) checkInstallDir() checkResult {
 func (a *App) checkInstalledFiles(st *State, sterr error) checkResult {
 	const label = "Installed files"
 	if sterr != nil {
-		return checkResult{statusFail, label, fmt.Sprintf("state.json is unreadable (%v) — run source pull", sterr)}
+		return checkResult{statusFail, label, fmt.Sprintf("state.json is unreadable (%v). Run source pull", sterr)}
 	}
 	recorded := map[string]bool{}
 	total, missing := 0, 0
@@ -331,10 +331,10 @@ func (a *App) checkInstalledFiles(st *State, sterr error) checkResult {
 		return checkResult{statusNA, label, "Nothing installed yet"}
 	}
 	if missing > 0 {
-		return checkResult{statusFail, label, fmt.Sprintf("%d of %d missing — run source pull", missing, total)}
+		return checkResult{statusFail, label, fmt.Sprintf("%d of %d missing. Run source pull", missing, total)}
 	}
 	if orphans := a.orphanFiles(recorded); len(orphans) > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("%s not owned by any source — run source pull, or delete them", plur(len(orphans), "file is", "files are"))}
+		return checkResult{statusWarn, label, fmt.Sprintf("%s not owned by any source. Run source pull, or delete them", plur(len(orphans), "file is", "files are"))}
 	}
 	return checkResult{statusOK, label, fmt.Sprintf("All %d present", total)}
 }
@@ -385,7 +385,7 @@ func (a *App) checkLeftoverState(srcs []Source, st *State, sterr error) checkRes
 		}
 	}
 	if stale > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("%s left from removed sources — run source pull to reconcile", plur(stale, "entry", "entries"))}
+		return checkResult{statusWarn, label, fmt.Sprintf("%s left from removed sources. Run source pull to reconcile", plur(stale, "entry", "entries"))}
 	}
 	return checkResult{statusOK, label, "None"}
 }
@@ -404,7 +404,7 @@ func (a *App) checkVSCode() checkResult {
 		}
 	}
 	if outOfSync > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("Out of sync in %s — run source pull", plur(outOfSync, "directory", "directories"))}
+		return checkResult{statusWarn, label, fmt.Sprintf("Out of sync in %s. Run source pull", plur(outOfSync, "directory", "directories"))}
 	}
 	return checkResult{statusOK, label, fmt.Sprintf("In sync (%s)", plur(len(dirs), "directory", "directories"))}
 }
@@ -417,7 +417,7 @@ func (a *App) checkCodespaces() checkResult {
 	if EnvSet() {
 		return checkResult{statusOK, label, "GH_COPILOT_INSTRUCTIONS is set"}
 	}
-	return checkResult{statusWarn, label, "GH_COPILOT_INSTRUCTIONS isn't set — add it as a Codespaces secret (see the README)"}
+	return checkResult{statusWarn, label, "GH_COPILOT_INSTRUCTIONS isn't set. Add it as a Codespaces secret (see the README)"}
 }
 
 func (a *App) checkAutoPull(st *State, sterr error) checkResult {
@@ -436,9 +436,9 @@ func (a *App) checkAutoPull(st *State, sterr error) checkResult {
 	enabled := st.AutoPull != nil && st.AutoPull.Enabled
 	switch {
 	case enabled && !installed:
-		return checkResult{statusFail, label, "Enabled but its scheduled job is missing — run auto-pull enable"}
+		return checkResult{statusFail, label, "Enabled but its scheduled job is missing. Run auto-pull enable"}
 	case !enabled && installed:
-		return checkResult{statusWarn, label, "A scheduled job is installed but auto-pull is disabled — run auto-pull disable"}
+		return checkResult{statusWarn, label, "A scheduled job is installed but auto-pull is disabled. Run auto-pull disable"}
 	case enabled && installed:
 		return checkResult{statusOK, label, "Enabled (scheduled job installed)"}
 	}
@@ -509,7 +509,7 @@ func (a *App) renderDoctorTable(w io.Writer, results []checkResult, isTTY bool, 
 }
 
 // doctorIcon maps a status to its glyph and color: ✓ green, ! yellow, ✗ red, and
-// a muted "–" for a check that doesn't apply.
+// a muted "-" for a check that doesn't apply.
 func doctorIcon(status string, cs *ColorScheme) (string, func(string) string) {
 	switch status {
 	case statusOK:
@@ -519,7 +519,7 @@ func doctorIcon(status string, cs *ColorScheme) (string, func(string) string) {
 	case statusFail:
 		return "✗", cs.Red
 	default: // statusNA
-		return "–", cs.Gray
+		return "-", cs.Gray
 	}
 }
 
