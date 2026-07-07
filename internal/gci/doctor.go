@@ -268,7 +268,7 @@ func (a *App) checkUpdates(srcs []Source, st *State, shas map[string]string, ste
 	if updates > 0 {
 		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d pulled sources have updates. Run source pull", updates, pulled)}
 	}
-	return checkResult{statusOK, label, "Everything is up to date"}
+	return checkResult{statusOK, label, "All sources are up to date"}
 }
 
 func (a *App) checkUnpulled(srcs []Source, st *State, sterr error) checkResult {
