@@ -13,6 +13,8 @@ import (
 var topLevelShortcuts = []struct{ Alias, Equiv string }{
 	{"add", "source add"},
 	{"pull", "source pull"},
+	{"sources", "source list"},
+	{"files", "file list"},
 }
 
 // applyGHStyle makes the command tree render help the way built-in gh commands

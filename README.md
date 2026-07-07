@@ -39,9 +39,10 @@ gh copilot-instructions auto-pull disable                                   # di
 ```
 
 The source-management commands live under `source` (`source list`, `source add`, `source pull`,
-`source remove`). For convenience the bare `add` and `pull` names still work as top-level aliases for
-`source add` and `source pull`. Running `gh copilot-instructions` with no command lists your sources
-once any are configured, and shows help on a fresh install.
+`source remove`) and the installed files under `file` (`file list`). For convenience several bare
+names work as top-level aliases: `add` → `source add`, `pull` → `source pull`, `sources` →
+`source list`, and `files` → `file list`. Running `gh copilot-instructions` with no command lists
+your sources once any are configured, and shows help on a fresh install.
 
 Every command accepts `--json` for machine-readable output. On a terminal the JSON is pretty-printed
 and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly into `jq`.

@@ -54,11 +54,17 @@ func rootCmd() *cobra.Command {
 	root.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	// Canonical command groups.
 	root.AddCommand(sourceCmd(), fileCmd(), autoPullCmd())
-	// Hidden top-level aliases keep the most-run commands working under their
-	// short names: `gh copilot-instructions add`/`pull` == `... source add`/`pull`.
-	// Each is an independent command instance sharing the same behavior. Keep in
-	// sync with topLevelShortcuts, which documents them in the root help.
-	root.AddCommand(hidden(addCmd()), hidden(pullCmd()))
+	// Hidden top-level aliases keep common commands reachable under short names
+	// (e.g. `add` == `source add`, `sources` == `source list`). Each is an
+	// independent command instance sharing the same behavior; the alias helper
+	// renames it and hides it from help. Keep in sync with topLevelShortcuts,
+	// which documents them in the root help.
+	root.AddCommand(
+		alias("add", addCmd()),
+		alias("pull", pullCmd()),
+		alias("sources", listCmd()),
+		alias("files", fileListCmd()),
+	)
 	applyGHStyle(root)
 	return root
 }
@@ -134,9 +140,12 @@ func fileListCmd() *cobra.Command {
 	return c
 }
 
-// hidden marks a command hidden (kept functional but out of help), for the
-// backward-compatible top-level aliases.
-func hidden(c *cobra.Command) *cobra.Command {
+// alias turns a command builder into a hidden top-level alias: it renames the
+// command to `use` (its invocation name) and hides it from help, while keeping
+// its flags, args, and behavior. Used for the shortcuts documented in the root
+// help's SHORTCUTS section.
+func alias(use string, c *cobra.Command) *cobra.Command {
+	c.Use = use
 	c.Hidden = true
 	return c
 }
