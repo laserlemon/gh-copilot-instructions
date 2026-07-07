@@ -350,10 +350,7 @@ func autoPullCmd() *cobra.Command {
 			return newApp().AutoPullEnable(cadence, jsonOut)
 		},
 	}
-	enable.Flags().StringVar(&every, "every", gci.DefaultEvery, "Cadence: hour, day, or week with shorthands, e.g. 3h, 2d, 1w (default: "+gci.DefaultEvery+")")
-	// The default is stated in the usage text above (gh style); blank the
-	// pflag DefValue so cobra doesn't also append its own (default "day").
-	enable.Flags().Lookup("every").DefValue = ""
+	enable.Flags().StringVar(&every, "every", gci.DefaultEvery, "Cadence: hour, day, or week with shorthands, e.g. 3h, 2d, 1w")
 
 	disable := &cobra.Command{
 		Use:   "disable",
