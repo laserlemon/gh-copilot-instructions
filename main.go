@@ -136,11 +136,12 @@ func doctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Diagnose your setup and suggest fixes",
-		Long: "Run read-only health checks and report what's wrong and how to fix it. Each row\n" +
-			"is a check with a status, the finding, and the command to run to fix it. Some\n" +
-			"checks talk to GitHub (verifying your token, that every source is reachable, and\n" +
-			"whether any have updates). Exits non-zero if any check fails, so it's usable in\n" +
-			"scripts and CI.",
+		Long: "Run read-only health checks. Each row is a check with a status, a fixed label,\n" +
+			"and a note - a healthy reading, or what's wrong and how to fix it. Checks that\n" +
+			"don't apply to this machine are shown dimmed. Some checks talk to GitHub\n" +
+			"(verifying your token, that every source is reachable, and whether any have\n" +
+			"updates). It exits non-zero if any check fails, so it's usable in scripts and\n" +
+			"CI.",
 		Example: heredoc(`
 			$ gh copilot-instructions doctor
 			$ gh copilot-instructions doctor --json | jq -r '.[] | select(.status!="ok")'`),

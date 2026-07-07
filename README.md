@@ -64,11 +64,13 @@ and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly i
   hand-written instruction files are never touched.
 - **`auto-pull`** enables or disables scheduled background pulling (`enable` / `disable` / `status`).
   See [Keep it fresh with auto-pull](#keep-it-fresh-with-auto-pull).
-- **`doctor`** runs read-only health checks and prints a table of `STATUS` / `CHECK` / `FIX` rows —
+- **`doctor`** runs read-only health checks and prints a table of `STATUS` / `CHECK` / `NOTE` rows —
   covering GitHub auth, whether your sources are configured and reachable, the install directory,
-  installed files (missing or orphaned), the VS Code mirror, and auto-pull. Some checks call GitHub
-  (verifying your token, reachability, and available updates). It exits non-zero if any check fails,
-  so it works in scripts and CI; use `--json` for structured output.
+  installed files (missing or orphaned), `applyTo` frontmatter, the VS Code mirror, auto-pull, and
+  more. The `CHECK` column is a fixed label and the `NOTE` carries the dynamic reading or the fix;
+  checks that don't apply to this machine are shown dimmed. Some checks call GitHub (verifying your
+  token, reachability, and available updates). It exits non-zero if any check fails, so it works in
+  scripts and CI; use `--json` for structured output.
 
 
 ## Sources & configuration

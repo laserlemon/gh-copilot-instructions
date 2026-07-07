@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -47,23 +46,23 @@ func newDoctorApp(t *testing.T, f fetcher) *App {
 	return a
 }
 
-func findCheck(results []checkResult, substr string) (checkResult, bool) {
+func byTitle(results []checkResult, title string) (checkResult, bool) {
 	for _, r := range results {
-		if strings.Contains(r.Check, substr) {
+		if r.Check == title {
 			return r, true
 		}
 	}
 	return checkResult{}, false
 }
 
-func mustCheck(t *testing.T, results []checkResult, substr, want string) {
+func mustCheck(t *testing.T, results []checkResult, title, want string) {
 	t.Helper()
-	r, ok := findCheck(results, substr)
+	r, ok := byTitle(results, title)
 	if !ok {
-		t.Fatalf("no check matching %q; got %+v", substr, results)
+		t.Fatalf("no check titled %q; got %+v", title, results)
 	}
 	if r.Status != want {
-		t.Fatalf("check %q: status=%s, want %s", substr, r.Status, want)
+		t.Fatalf("check %q: status=%s (note %q), want %s", title, r.Status, r.Note, want)
 	}
 }
 
@@ -89,13 +88,13 @@ func TestDoctorHealthy(t *testing.T) {
 	installOne(t, a)
 
 	res := a.diagnose()
-	mustCheck(t, res, "Authenticated to GitHub as octocat", statusOK)
-	mustCheck(t, res, "rate limit", statusOK)
-	mustCheck(t, res, "source configured", statusOK)
-	mustCheck(t, res, "permissions are correct", statusOK)
-	mustCheck(t, res, "reachable on GitHub", statusOK)
-	mustCheck(t, res, "Install directory is present", statusOK)
-	mustCheck(t, res, "installed file", statusOK)
+	mustCheck(t, res, "GitHub authentication", statusOK)
+	mustCheck(t, res, "API rate limit", statusOK)
+	mustCheck(t, res, "Sources configured", statusOK)
+	mustCheck(t, res, "Sources file permissions", statusOK)
+	mustCheck(t, res, "Source reachability", statusOK)
+	mustCheck(t, res, "Install directory", statusOK)
+	mustCheck(t, res, "Installed files", statusOK)
 
 	if _, _, fail := tally(res); fail != 0 {
 		t.Fatalf("healthy setup reported failures: %+v", res)
@@ -105,7 +104,7 @@ func TestDoctorHealthy(t *testing.T) {
 func TestDoctorNoSources(t *testing.T) {
 	a := newDoctorApp(t, &fakeFetcher{})
 	res := a.diagnose()
-	mustCheck(t, res, "No sources are configured", statusWarn)
+	mustCheck(t, res, "Sources configured", statusWarn)
 }
 
 func TestDoctorMissingFiles(t *testing.T) {
@@ -116,7 +115,7 @@ func TestDoctorMissingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := a.diagnose()
-	mustCheck(t, res, "installed files are missing", statusFail)
+	mustCheck(t, res, "Installed files", statusFail)
 	if _, _, fail := tally(res); fail == 0 {
 		t.Fatal("missing files should fail the run")
 	}
@@ -130,7 +129,7 @@ func TestDoctorOrphanFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := a.diagnose()
-	mustCheck(t, res, "not owned by any source", statusWarn)
+	mustCheck(t, res, "Installed files", statusWarn)
 }
 
 func TestDoctorUnreachable(t *testing.T) {
@@ -140,7 +139,7 @@ func TestDoctorUnreachable(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := a.diagnose()
-	mustCheck(t, res, "unreachable", statusFail)
+	mustCheck(t, res, "Source reachability", statusFail)
 }
 
 func TestDoctorAnonymous(t *testing.T) {
@@ -151,7 +150,7 @@ func TestDoctorAnonymous(t *testing.T) {
 	t.Setenv("GH_TOKEN", "")
 	t.Setenv("GITHUB_TOKEN", "")
 	res := a.diagnose()
-	mustCheck(t, res, "Not authenticated", statusWarn)
+	mustCheck(t, res, "GitHub authentication", statusWarn)
 }
 
 func TestDoctorUpdatesAvailable(t *testing.T) {
@@ -160,7 +159,7 @@ func TestDoctorUpdatesAvailable(t *testing.T) {
 	// Advance the remote commit; the recorded state SHA now lags.
 	a.F.(*fakeFetcher).sha[src.ID()] = "sha2222222222222222222222222222222222222"
 	res := a.diagnose()
-	mustCheck(t, res, "updates available", statusWarn)
+	mustCheck(t, res, "Available updates", statusWarn)
 }
 
 func TestDoctorExitNonZeroOnFail(t *testing.T) {
@@ -188,7 +187,7 @@ func TestDoctorFrontmatter(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := a.diagnose()
-	mustCheck(t, res, "no applyTo frontmatter", statusWarn)
+	mustCheck(t, res, "applyTo frontmatter", statusWarn)
 }
 
 func TestDoctorInlineToken(t *testing.T) {
@@ -197,7 +196,7 @@ func TestDoctorInlineToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := a.diagnose()
-	mustCheck(t, res, "inline token stored", statusWarn)
+	mustCheck(t, res, "Inline tokens", statusWarn)
 }
 
 func TestPlur(t *testing.T) {

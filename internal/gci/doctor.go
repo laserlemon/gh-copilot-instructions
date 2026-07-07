@@ -16,18 +16,20 @@ import (
 	"github.com/cli/go-gh/v2/pkg/text"
 )
 
-// checkResult is one doctor check outcome. It maps directly to a table row
-// (status icon, the finding, and a fix command) and to the --json output.
+// checkResult is one doctor check. Check is a fixed label (the same text every
+// run); Note carries the dynamic reading - a healthy detail, a problem plus its
+// fix, or (for a not-applicable check) why it doesn't apply here.
 type checkResult struct {
-	Status string `json:"status"` // statusOK | statusWarn | statusFail
-	Check  string `json:"check"`  // the finding (what is true right now)
-	Fix    string `json:"fix,omitempty"`
+	Status string `json:"status"` // statusOK | statusWarn | statusFail | statusNA
+	Check  string `json:"check"`  // fixed label / title
+	Note   string `json:"note,omitempty"`
 }
 
 const (
 	statusOK   = "ok"
 	statusWarn = "warn"
 	statusFail = "fail"
+	statusNA   = "na" // doesn't apply to this machine/config (rendered dimmed)
 )
 
 // accountProbe answers "who am I" and rate-limit questions against the GitHub
@@ -104,127 +106,131 @@ func (a *App) Doctor(asJSON bool) error {
 	return nil
 }
 
-// diagnose runs all checks in a sensible order (auth -> config -> reachability
-// -> install/state -> surfaces -> auto-pull) and returns the results. Checks
-// that don't apply to this machine (no VS Code, not in a Codespace, ...) are
-// omitted rather than shown as passing.
+// diagnose runs the full fixed set of checks, always in the same order and
+// always producing a row for each (a check that doesn't apply to this machine
+// reports statusNA rather than being dropped).
 func (a *App) diagnose() []checkResult {
-	var out []checkResult
-	add := func(r checkResult) { out = append(out, r) }
-	maybe := func(r checkResult, ok bool) {
-		if ok {
-			out = append(out, r)
-		}
-	}
-
 	token := ambientToken()
-	add(a.checkAuth(token))
-	maybe(a.checkRateLimit(token))
-
 	srcs, origin, serr := a.Paths.LoadSources()
-	add(a.checkSources(srcs, origin, serr))
-	maybe(a.checkEnvOverride())
-	maybe(a.checkSourcesPerms())
-
-	// Resolve every source once; reuse the SHAs for the updates check.
-	shas := map[string]string{}
-	if serr == nil && len(srcs) > 0 {
-		add(a.checkReachable(srcs, shas))
-	}
-
 	st, sterr := a.Paths.LoadState()
-	add(a.checkInstallDir())
-	add(a.checkInstalledFiles(st, sterr))
-	maybe(a.checkFrontmatter(st, sterr))
-	maybe(a.checkNeverPulled(srcs, st, sterr))
-	maybe(a.checkUpdates(srcs, st, shas, sterr))
-	maybe(a.checkStaleState(srcs, st, sterr))
-	maybe(a.checkInlineTokens(srcs))
 
-	maybe(a.checkVSCode())
-	maybe(a.checkCodespaces())
-	maybe(a.checkAutoPull(st, sterr))
+	// Resolve every source once (network); reused by reachability and updates.
+	shas := map[string]string{}
+	reach := a.checkReachable(srcs, shas)
 
-	return out
+	return []checkResult{
+		a.checkAuth(token),
+		a.checkRateLimit(token),
+		a.checkSources(srcs, origin, serr),
+		a.checkEnvOverride(),
+		a.checkSourcesPerms(),
+		a.checkInlineTokens(srcs),
+		reach,
+		a.checkUpdates(srcs, st, shas, sterr),
+		a.checkUnpulled(srcs, st, sterr),
+		a.checkInstallDir(),
+		a.checkInstalledFiles(st, sterr),
+		a.checkFrontmatter(st, sterr),
+		a.checkLeftoverState(srcs, st, sterr),
+		a.checkVSCode(),
+		a.checkCodespaces(),
+		a.checkAutoPull(st, sterr),
+	}
 }
 
 // --- individual checks -------------------------------------------------------
+//
+// Each returns a checkResult with a fixed Check label; the Note holds the
+// dynamic detail (and, when there's a problem, the command to fix it).
 
 func (a *App) checkAuth(token string) checkResult {
+	const label = "GitHub authentication"
 	if token == "" {
-		return checkResult{statusWarn,
-			"Not authenticated to GitHub (anonymous: public repos only, low rate limit)",
-			"gh auth login"}
+		return checkResult{statusWarn, label, "Anonymous: public repos only, low rate limit — run gh auth login"}
 	}
 	login, err := a.probe().Whoami(token)
 	if err != nil {
-		return checkResult{statusFail,
-			"GitHub token is invalid or the API is unreachable",
-			"gh auth login (or check GH_COPILOT_INSTRUCTIONS_TOKEN)"}
+		return checkResult{statusFail, label, "Token is invalid or the API is unreachable — run gh auth login"}
 	}
-	return checkResult{statusOK, fmt.Sprintf("Authenticated to GitHub as %s", login), ""}
+	return checkResult{statusOK, label, fmt.Sprintf("Authenticated as %s", login)}
 }
 
-func (a *App) checkRateLimit(token string) (checkResult, bool) {
+func (a *App) checkRateLimit(token string) checkResult {
+	const label = "API rate limit"
 	rem, lim, err := a.probe().RateLimit(token)
 	if err != nil || lim == 0 {
-		return checkResult{}, false // API unreachable: the auth check already covers it
+		return checkResult{statusNA, label, "Unavailable (couldn't reach the GitHub API)"}
 	}
-	msg := fmt.Sprintf("GitHub API rate limit: %d/%d requests remaining", rem, lim)
+	note := fmt.Sprintf("%d/%d requests remaining", rem, lim)
 	switch {
 	case rem == 0:
-		return checkResult{statusFail, "GitHub API rate limit is exhausted",
-			"Wait for it to reset, or authenticate for a higher limit: gh auth login"}, true
+		return checkResult{statusFail, label, "Exhausted — wait for it to reset, or authenticate for a higher limit"}
 	case rem*10 < lim: // under 10% left
-		return checkResult{statusWarn, msg + " (running low)",
-			"Authenticate for a higher limit: gh auth login"}, true
+		return checkResult{statusWarn, label, "Running low: " + note + " — authenticate for a higher limit"}
 	}
-	return checkResult{statusOK, msg, ""}, true
+	return checkResult{statusOK, label, note}
 }
 
 func (a *App) checkSources(srcs []Source, origin ConfigOrigin, err error) checkResult {
+	const label = "Sources configured"
 	if err != nil {
-		return checkResult{statusFail, fmt.Sprintf("Couldn't read your sources (%v)", err),
-			"Check " + abbrevHome(a.Paths.SourcesFile)}
+		return checkResult{statusFail, label, fmt.Sprintf("Couldn't read your sources (%v)", err)}
 	}
 	if origin == OriginNone || len(srcs) == 0 {
-		return checkResult{statusWarn, "No sources are configured",
-			"gh copilot-instructions source add <owner/repo>"}
+		return checkResult{statusWarn, label, "None — add one: gh copilot-instructions source add <owner/repo>"}
 	}
-	where := "your config file"
+	where := "config file"
 	if origin == OriginEnv {
-		where = "the GH_COPILOT_INSTRUCTIONS env var"
+		where = "GH_COPILOT_INSTRUCTIONS"
 	}
-	return checkResult{statusOK,
-		fmt.Sprintf("%s configured (from %s)", plur(len(srcs), "source", "sources"), where), ""}
+	return checkResult{statusOK, label, fmt.Sprintf("%s (from your %s)", plur(len(srcs), "source", "sources"), where)}
 }
 
-func (a *App) checkEnvOverride() (checkResult, bool) {
+func (a *App) checkEnvOverride() checkResult {
+	const label = "Environment override"
 	if !EnvSet() {
-		return checkResult{}, false
+		return checkResult{statusNA, label, "GH_COPILOT_INSTRUCTIONS is not set"}
 	}
 	if _, err := os.Stat(a.Paths.SourcesFile); err == nil {
-		return checkResult{statusWarn,
-			"GH_COPILOT_INSTRUCTIONS is set and overrides your sources file",
-			"Unset it to use the file, or ignore this if intended"}, true
+		return checkResult{statusWarn, label, "GH_COPILOT_INSTRUCTIONS is overriding your sources file — unset it to use the file"}
 	}
-	return checkResult{}, false
+	return checkResult{statusOK, label, "GH_COPILOT_INSTRUCTIONS is active (no sources file to shadow)"}
 }
 
-func (a *App) checkSourcesPerms() (checkResult, bool) {
+func (a *App) checkSourcesPerms() checkResult {
+	const label = "Sources file permissions"
 	fi, err := os.Stat(a.Paths.SourcesFile)
 	if err != nil {
-		return checkResult{}, false // no file (env mode / fresh install): nothing to check
+		return checkResult{statusNA, label, "No sources file on disk"}
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
-		return checkResult{statusWarn,
-			"Your sources file is readable by other users (it can hold tokens)",
-			fmt.Sprintf("chmod 600 %s", abbrevHome(a.Paths.SourcesFile))}, true
+		return checkResult{statusWarn, label, fmt.Sprintf("Readable by other users (it can hold tokens) — chmod 600 %s", abbrevHome(a.Paths.SourcesFile))}
 	}
-	return checkResult{statusOK, "Sources file permissions are correct (600)", ""}, true
+	return checkResult{statusOK, label, "Correct (600)"}
+}
+
+func (a *App) checkInlineTokens(srcs []Source) checkResult {
+	const label = "Inline tokens"
+	if len(srcs) == 0 {
+		return checkResult{statusNA, label, "No sources configured"}
+	}
+	n := 0
+	for _, s := range srcs {
+		if s.Token != "" {
+			n++
+		}
+	}
+	if n > 0 {
+		return checkResult{statusWarn, label, fmt.Sprintf("%s a token in plain text — prefer gh auth or GH_COPILOT_INSTRUCTIONS_TOKEN", plur(n, "source stores", "sources store"))}
+	}
+	return checkResult{statusOK, label, "None stored in your config"}
 }
 
 func (a *App) checkReachable(srcs []Source, shas map[string]string) checkResult {
+	const label = "Source reachability"
+	if len(srcs) == 0 {
+		return checkResult{statusNA, label, "No sources configured"}
+	}
 	var unreachable []string
 	for _, s := range srcs {
 		sha, err := a.F.ResolveSHA(s)
@@ -235,40 +241,80 @@ func (a *App) checkReachable(srcs []Source, shas map[string]string) checkResult 
 		shas[s.ID()] = sha
 	}
 	if len(unreachable) == 0 {
-		return checkResult{statusOK,
-			fmt.Sprintf("All %s reachable on GitHub", plur(len(srcs), "source is", "sources are")), ""}
+		return checkResult{statusOK, label, fmt.Sprintf("All %s reachable on GitHub", plur(len(srcs), "source is", "sources are"))}
 	}
-	return checkResult{statusFail,
-		fmt.Sprintf("%d of %d sources are unreachable: %s", len(unreachable), len(srcs), strings.Join(dedupe(unreachable), ", ")),
-		"Verify the repo and ref, and your access (gh auth / --token)"}
+	return checkResult{statusFail, label, fmt.Sprintf("%d of %d unreachable: %s — check the repo, ref, and your access", len(unreachable), len(srcs), strings.Join(dedupe(unreachable), ", "))}
+}
+
+func (a *App) checkUpdates(srcs []Source, st *State, shas map[string]string, sterr error) checkResult {
+	const label = "Available updates"
+	if sterr != nil {
+		return checkResult{statusNA, label, "State is unreadable"}
+	}
+	pulled, updates := 0, 0
+	for _, s := range srcs {
+		ss, ok := st.Sources[s.ID()]
+		if !ok || ss.SHA == "" {
+			continue
+		}
+		pulled++
+		if cur, ok := shas[s.ID()]; ok && cur != ss.SHA {
+			updates++
+		}
+	}
+	if pulled == 0 {
+		return checkResult{statusNA, label, "Nothing pulled yet"}
+	}
+	if updates > 0 {
+		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d pulled sources have updates — run source pull", updates, pulled)}
+	}
+	return checkResult{statusOK, label, "Everything is up to date"}
+}
+
+func (a *App) checkUnpulled(srcs []Source, st *State, sterr error) checkResult {
+	const label = "Unpulled sources"
+	if sterr != nil {
+		return checkResult{statusNA, label, "State is unreadable"}
+	}
+	if len(srcs) == 0 {
+		return checkResult{statusNA, label, "No sources configured"}
+	}
+	never := 0
+	for _, s := range srcs {
+		if _, ok := st.Sources[s.ID()]; !ok {
+			never++
+		}
+	}
+	if never > 0 {
+		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d never pulled — run source pull", never, len(srcs))}
+	}
+	return checkResult{statusOK, label, "All sources have been pulled"}
 }
 
 func (a *App) checkInstallDir() checkResult {
+	const label = "Install directory"
 	dir := a.Paths.InstallDir
 	fi, err := os.Stat(dir)
 	if os.IsNotExist(err) {
-		return checkResult{statusWarn, "The install directory doesn't exist yet (nothing pulled)",
-			"gh copilot-instructions source pull"}
+		return checkResult{statusWarn, label, "Doesn't exist yet (nothing pulled) — run source pull"}
 	}
 	if err != nil || !fi.IsDir() {
-		return checkResult{statusFail, fmt.Sprintf("Install directory is not usable: %s", abbrevHome(dir)),
-			"Check permissions on ~/.copilot"}
+		return checkResult{statusFail, label, fmt.Sprintf("Not usable: %s — check permissions on ~/.copilot", abbrevHome(dir))}
 	}
 	probe := filepath.Join(dir, ".gci-doctor-write-test")
 	f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return checkResult{statusFail, fmt.Sprintf("Install directory is not writable: %s", abbrevHome(dir)),
-			"Check permissions on " + abbrevHome(dir)}
+		return checkResult{statusFail, label, fmt.Sprintf("Not writable: %s", abbrevHome(dir))}
 	}
 	f.Close()
 	os.Remove(probe)
-	return checkResult{statusOK, fmt.Sprintf("Install directory is present and writable (%s)", abbrevHome(dir)), ""}
+	return checkResult{statusOK, label, fmt.Sprintf("Present and writable (%s)", abbrevHome(dir))}
 }
 
 func (a *App) checkInstalledFiles(st *State, sterr error) checkResult {
+	const label = "Installed files"
 	if sterr != nil {
-		return checkResult{statusFail, fmt.Sprintf("state.json is unreadable (%v)", sterr),
-			"gh copilot-instructions source pull (regenerates it)"}
+		return checkResult{statusFail, label, fmt.Sprintf("state.json is unreadable (%v) — run source pull", sterr)}
 	}
 	recorded := map[string]bool{}
 	total, missing := 0, 0
@@ -282,24 +328,21 @@ func (a *App) checkInstalledFiles(st *State, sterr error) checkResult {
 		}
 	}
 	if total == 0 {
-		return checkResult{statusOK, "No instruction files are installed yet", ""}
+		return checkResult{statusNA, label, "Nothing installed yet"}
 	}
 	if missing > 0 {
-		return checkResult{statusFail,
-			fmt.Sprintf("%d of %d installed files are missing", missing, total),
-			"gh copilot-instructions source pull"}
+		return checkResult{statusFail, label, fmt.Sprintf("%d of %d missing — run source pull", missing, total)}
 	}
 	if orphans := a.orphanFiles(recorded); len(orphans) > 0 {
-		return checkResult{statusWarn,
-			fmt.Sprintf("%s in the install dir not owned by any source", plur(len(orphans), "file", "files")),
-			"gh copilot-instructions source pull (or delete them)"}
+		return checkResult{statusWarn, label, fmt.Sprintf("%s not owned by any source — run source pull, or delete them", plur(len(orphans), "file is", "files are"))}
 	}
-	return checkResult{statusOK, fmt.Sprintf("All %s present", plur(total, "installed file is", "installed files are")), ""}
+	return checkResult{statusOK, label, fmt.Sprintf("All %d present", total)}
 }
 
-func (a *App) checkFrontmatter(st *State, sterr error) (checkResult, bool) {
+func (a *App) checkFrontmatter(st *State, sterr error) checkResult {
+	const label = "applyTo frontmatter"
 	if sterr != nil {
-		return checkResult{}, false
+		return checkResult{statusNA, label, "State is unreadable"}
 	}
 	checked, noApply := 0, 0
 	for _, ss := range st.Sources {
@@ -314,76 +357,22 @@ func (a *App) checkFrontmatter(st *State, sterr error) (checkResult, bool) {
 			}
 		}
 	}
-	if checked == 0 || noApply == 0 {
-		return checkResult{}, false
+	if checked == 0 {
+		return checkResult{statusNA, label, "No files installed"}
 	}
-	return checkResult{statusWarn,
-		fmt.Sprintf("%d of %d instruction files have no applyTo frontmatter (may not auto-apply in VS Code)", noApply, checked),
-		"Add applyTo frontmatter to the files in the source repo"}, true
+	if noApply > 0 {
+		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d files have no applyTo (VS Code won't auto-apply them)", noApply, checked)}
+	}
+	return checkResult{statusOK, label, fmt.Sprintf("All %d files declare applyTo", checked)}
 }
 
-func (a *App) checkInlineTokens(srcs []Source) (checkResult, bool) {
-	n := 0
-	for _, s := range srcs {
-		if s.Token != "" {
-			n++
-		}
-	}
-	if n == 0 {
-		return checkResult{}, false
-	}
-	return checkResult{statusWarn,
-		fmt.Sprintf("%s an inline token stored in your config file", plur(n, "source has", "sources have")),
-		"Prefer gh auth or GH_COPILOT_INSTRUCTIONS_TOKEN to keep tokens out of the file"}, true
-}
-
-func (a *App) checkNeverPulled(srcs []Source, st *State, sterr error) (checkResult, bool) {
-	if sterr != nil || len(srcs) == 0 {
-		return checkResult{}, false
-	}
-	never := 0
-	for _, s := range srcs {
-		if _, ok := st.Sources[s.ID()]; !ok {
-			never++
-		}
-	}
-	if never == 0 {
-		return checkResult{}, false
-	}
-	return checkResult{statusWarn,
-		fmt.Sprintf("%d of %d sources have never been pulled", never, len(srcs)),
-		"gh copilot-instructions source pull"}, true
-}
-
-func (a *App) checkUpdates(srcs []Source, st *State, shas map[string]string, sterr error) (checkResult, bool) {
+func (a *App) checkLeftoverState(srcs []Source, st *State, sterr error) checkResult {
+	const label = "Leftover state"
 	if sterr != nil {
-		return checkResult{}, false
+		return checkResult{statusNA, label, "State is unreadable"}
 	}
-	updates := 0
-	for _, s := range srcs {
-		cur, ok := shas[s.ID()]
-		if !ok {
-			continue // unreachable or not resolved
-		}
-		ss, ok := st.Sources[s.ID()]
-		if !ok || ss.SHA == "" {
-			continue // never pulled: covered by checkNeverPulled
-		}
-		if cur != ss.SHA {
-			updates++
-		}
-	}
-	if updates == 0 {
-		return checkResult{}, false
-	}
-	return checkResult{statusWarn,
-		fmt.Sprintf("%d of %d sources have updates available", updates, len(srcs)),
-		"gh copilot-instructions source pull"}, true
-}
-
-func (a *App) checkStaleState(srcs []Source, st *State, sterr error) (checkResult, bool) {
-	if sterr != nil {
-		return checkResult{}, false
+	if len(st.Sources) == 0 {
+		return checkResult{statusNA, label, "No state recorded yet"}
 	}
 	configured := map[string]bool{}
 	for _, s := range srcs {
@@ -395,18 +384,17 @@ func (a *App) checkStaleState(srcs []Source, st *State, sterr error) (checkResul
 			stale++
 		}
 	}
-	if stale == 0 {
-		return checkResult{}, false
+	if stale > 0 {
+		return checkResult{statusWarn, label, fmt.Sprintf("%s left from removed sources — run source pull to reconcile", plur(stale, "entry", "entries"))}
 	}
-	return checkResult{statusWarn,
-		fmt.Sprintf("%s left over from sources you removed", plur(stale, "state entry", "state entries")),
-		"gh copilot-instructions source pull (reconciles state)"}, true
+	return checkResult{statusOK, label, "None"}
 }
 
-func (a *App) checkVSCode() (checkResult, bool) {
+func (a *App) checkVSCode() checkResult {
+	const label = "VS Code prompts"
 	dirs := vscodePromptDirs()
 	if len(dirs) == 0 {
-		return checkResult{}, false // VS Code isn't installed: nothing to mirror
+		return checkResult{statusNA, label, "VS Code isn't installed"}
 	}
 	src := filepath.Join(a.Paths.InstallDir, FileDir)
 	outOfSync := 0
@@ -416,50 +404,45 @@ func (a *App) checkVSCode() (checkResult, bool) {
 		}
 	}
 	if outOfSync > 0 {
-		return checkResult{statusWarn,
-			fmt.Sprintf("VS Code prompts are out of sync (%s)", plur(outOfSync, "directory", "directories")),
-			"gh copilot-instructions source pull"}, true
+		return checkResult{statusWarn, label, fmt.Sprintf("Out of sync in %s — run source pull", plur(outOfSync, "directory", "directories"))}
 	}
-	return checkResult{statusOK,
-		fmt.Sprintf("VS Code prompts are in sync (%s)", plur(len(dirs), "directory", "directories")), ""}, true
+	return checkResult{statusOK, label, fmt.Sprintf("In sync (%s)", plur(len(dirs), "directory", "directories"))}
 }
 
-func (a *App) checkCodespaces() (checkResult, bool) {
+func (a *App) checkCodespaces() checkResult {
+	const label = "Codespaces secret"
 	if os.Getenv("CODESPACES") != "true" {
-		return checkResult{}, false
+		return checkResult{statusNA, label, "Not running in a Codespace"}
 	}
 	if EnvSet() {
-		return checkResult{statusOK, "Running in a Codespace with GH_COPILOT_INSTRUCTIONS set", ""}, true
+		return checkResult{statusOK, label, "GH_COPILOT_INSTRUCTIONS is set"}
 	}
-	return checkResult{statusWarn,
-		"In a Codespace but GH_COPILOT_INSTRUCTIONS isn't set (instructions won't apply here)",
-		"Add it as a Codespaces secret (see the README)"}, true
+	return checkResult{statusWarn, label, "GH_COPILOT_INSTRUCTIONS isn't set — add it as a Codespaces secret (see the README)"}
 }
 
-func (a *App) checkAutoPull(st *State, sterr error) (checkResult, bool) {
-	if sterr != nil {
-		return checkResult{}, false
-	}
+func (a *App) checkAutoPull(st *State, sterr error) checkResult {
+	const label = "Auto-pull"
 	sc := a.sched()
 	if !sc.Supported() {
-		return checkResult{}, false // only meaningful where we can schedule
+		return checkResult{statusNA, label, fmt.Sprintf("Not supported on %s yet", sc.Kind())}
+	}
+	if sterr != nil {
+		return checkResult{statusNA, label, "State is unreadable"}
 	}
 	installed, err := sc.Installed()
 	if err != nil {
-		return checkResult{}, false
+		return checkResult{statusNA, label, "Couldn't read the scheduler"}
 	}
 	enabled := st.AutoPull != nil && st.AutoPull.Enabled
 	switch {
 	case enabled && !installed:
-		return checkResult{statusFail, "Auto-pull is enabled but its scheduled job is missing",
-			"gh copilot-instructions auto-pull enable"}, true
+		return checkResult{statusFail, label, "Enabled but its scheduled job is missing — run auto-pull enable"}
 	case !enabled && installed:
-		return checkResult{statusWarn, "A scheduled auto-pull job is installed but auto-pull is disabled",
-			"gh copilot-instructions auto-pull disable"}, true
+		return checkResult{statusWarn, label, "A scheduled job is installed but auto-pull is disabled — run auto-pull disable"}
 	case enabled && installed:
-		return checkResult{statusOK, "Auto-pull is enabled and its scheduled job is installed", ""}, true
+		return checkResult{statusOK, label, "Enabled (scheduled job installed)"}
 	}
-	return checkResult{}, false // disabled and no job: nothing to report
+	return checkResult{statusNA, label, "Disabled"}
 }
 
 // --- rendering ---------------------------------------------------------------
@@ -498,34 +481,49 @@ func (a *App) renderDoctorTable(w io.Writer, results []checkResult, isTTY bool, 
 	if isTTY {
 		tp.AddField("", tableprinter.WithColor(cs.Header))
 		tp.AddField("CHECK", tableprinter.WithColor(cs.Header), padRight)
-		tp.AddField("FIX", tableprinter.WithColor(cs.Header), padRight)
+		tp.AddField("NOTE", tableprinter.WithColor(cs.Header), padRight)
 		tp.EndRow()
 	}
 	for _, r := range results {
-		if isTTY {
-			glyph, color := doctorIcon(r.Status, cs)
-			tp.AddField(glyph, tableprinter.WithColor(color))
-		} else {
+		if !isTTY {
 			tp.AddField(r.Status)
+			tp.AddField(r.Check)
+			tp.AddField(r.Note)
+			tp.EndRow()
+			continue
 		}
-		tp.AddField(r.Check)
-		tp.AddField(r.Fix)
+		glyph, color := doctorIcon(r.Status, cs)
+		tp.AddField(glyph, tableprinter.WithColor(color))
+		// A not-applicable row is dimmed whole (label and note gray); every
+		// other row keeps its label and note in the default foreground.
+		if r.Status == statusNA {
+			tp.AddField(r.Check, tableprinter.WithColor(cs.Gray))
+			tp.AddField(r.Note, tableprinter.WithColor(cs.Gray))
+		} else {
+			tp.AddField(r.Check)
+			tp.AddField(r.Note)
+		}
 		tp.EndRow()
 	}
 	_ = tp.Render()
 }
 
+// doctorIcon maps a status to its glyph and color: ✓ green, ! yellow, ✗ red, and
+// a muted "–" for a check that doesn't apply.
 func doctorIcon(status string, cs *ColorScheme) (string, func(string) string) {
 	switch status {
 	case statusOK:
 		return "✓", cs.Green
 	case statusWarn:
 		return "!", cs.Yellow
-	default:
+	case statusFail:
 		return "✗", cs.Red
+	default: // statusNA
+		return "–", cs.Gray
 	}
 }
 
+// tally counts the real outcomes (not-applicable checks are excluded).
 func tally(results []checkResult) (ok, warn, fail int) {
 	for _, r := range results {
 		switch r.Status {
