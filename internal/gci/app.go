@@ -650,8 +650,9 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 		return files[i].Rel < files[j].Rel
 	})
 	var installed []string
-	seen := map[string]string{} // dest path -> repo path that produced it
-	missingApplyTo := 0         // installed files with no applyTo frontmatter value
+	remote := map[string]string{} // installed path -> repo-relative source path
+	seen := map[string]string{}   // dest path -> repo path that produced it
+	missingApplyTo := 0           // installed files with no applyTo frontmatter value
 	for _, f := range files {
 		rel := s.DestPath(f.Rel)
 		if rel == "" {
@@ -663,6 +664,7 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 			continue
 		}
 		seen[rel] = f.Rel
+		remote[rel] = f.Rel
 		if err := a.writeInstall(rel, f.Content); err != nil {
 			o := failState()
 			o.err = err
@@ -692,6 +694,7 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 		SHA:      sha,
 		PulledAt: now,
 		Files:    installed,
+		Remote:   remote,
 	}
 	return pullOutcome{
 		row:      a.rowForState(s, ns, true),

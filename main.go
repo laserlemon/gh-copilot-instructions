@@ -53,7 +53,7 @@ func rootCmd() *cobra.Command {
 	}
 	root.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	// Canonical command groups.
-	root.AddCommand(sourceCmd(), autoPullCmd())
+	root.AddCommand(sourceCmd(), fileCmd(), autoPullCmd())
 	// Hidden top-level aliases keep the most-run commands working under their
 	// short names: `gh copilot-instructions add`/`pull` == `... source add`/`pull`.
 	// Each is an independent command instance sharing the same behavior. Keep in
@@ -84,6 +84,53 @@ func sourceCmd() *cobra.Command {
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	c.AddCommand(listCmd(), addCmd(), removeCmd(), pullCmd())
+	return c
+}
+
+// fileCmd is the `file` group: inspect the installed instruction files. Bare
+// `file` defaults to `list`.
+func fileCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "file <command> [flags]",
+		Short: "Show pulled instruction files",
+		Long: "List the instruction files installed from your configured sources.\n\n" +
+			"Run with no subcommand to list files.",
+		Example: heredoc(`
+			# List every installed instruction file and its source
+			$ gh copilot-instructions file list
+
+			# The absolute path of every installed file, for scripting
+			$ gh copilot-instructions file list --json | jq -r '.[].path'`),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return newApp().RenderFileList(asJSON)
+		},
+	}
+	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
+	c.AddCommand(fileListCmd())
+	return c
+}
+
+func fileListCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "list",
+		Short: "List all pulled instruction files",
+		Long: "List every instruction file installed from your configured sources,\n" +
+			"with the source each came from.",
+		Example: heredoc(`
+			# List installed files (aligned table on a terminal, TSV when piped)
+			$ gh copilot-instructions file list
+
+			# Machine-readable output
+			$ gh copilot-instructions file list --json | jq -r '.[].file'`),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return newApp().RenderFileList(asJSON)
+		},
+	}
+	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	return c
 }
 

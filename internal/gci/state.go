@@ -15,6 +15,11 @@ type SourceState struct {
 	SHA      string    `json:"sha"`
 	PulledAt time.Time `json:"pulled_at"`
 	Files    []string  `json:"files"` // installed filenames (relative to InstallDir); also the prune manifest
+	// Remote maps each installed file (a Files entry) to the repo-relative path
+	// it was pulled from, so `file list` can show the true source path and link
+	// to its GitHub blob. Absent on state written before this was recorded; such
+	// entries repopulate on the next pull.
+	Remote map[string]string `json:"remote,omitempty"`
 }
 
 // State maps source id -> SourceState.
