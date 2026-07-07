@@ -145,7 +145,6 @@ func (a *App) diagnose() []checkResult {
 		a.checkSources(srcs, origin, serr),
 		a.checkEnvOverride(),
 		a.checkSourcesPerms(),
-		a.checkInlineTokens(srcs),
 		reach,
 		a.checkUpdates(srcs, st, shas, sterr),
 		a.checkUnpulled(srcs, st, sterr),
@@ -193,7 +192,7 @@ func (a *App) checkAuth(token string) checkResult {
 }
 
 func (a *App) checkRateLimit(token string) checkResult {
-	const label = "API rate limit"
+	const label = "GitHub API rate limit"
 	rem, lim, err := a.probe().RateLimit(token)
 	if err != nil || lim == 0 {
 		return checkResult{statusNA, label, "Unavailable (couldn't reach the GitHub API)"}
@@ -216,7 +215,7 @@ func (a *App) checkSources(srcs []Source, origin ConfigOrigin, err error) checkR
 	if origin == OriginNone || len(srcs) == 0 {
 		return checkResult{statusWarn, label, "None. Add one: gh copilot-instructions source add <owner/repo>"}
 	}
-	where := "config file"
+	where := "configuration file"
 	if origin == OriginEnv {
 		where = "GH_COPILOT_INSTRUCTIONS"
 	}
@@ -235,7 +234,7 @@ func (a *App) checkEnvOverride() checkResult {
 }
 
 func (a *App) checkSourcesPerms() checkResult {
-	const label = "Sources file permissions"
+	const label = "Configuration file permissions"
 	fi, err := os.Stat(a.Paths.SourcesFile)
 	if err != nil {
 		return checkResult{statusNA, label, "No sources file on disk"}
@@ -244,23 +243,6 @@ func (a *App) checkSourcesPerms() checkResult {
 		return checkResult{statusWarn, label, fmt.Sprintf("Readable by other users (it can hold tokens). Run chmod 600 %s", abbrevHome(a.Paths.SourcesFile))}
 	}
 	return checkResult{statusOK, label, "Correct (600)"}
-}
-
-func (a *App) checkInlineTokens(srcs []Source) checkResult {
-	const label = "Inline tokens"
-	if len(srcs) == 0 {
-		return checkResult{statusNA, label, "No sources configured"}
-	}
-	n := 0
-	for _, s := range srcs {
-		if s.Token != "" {
-			n++
-		}
-	}
-	if n > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("%s a token in plain text. Prefer gh auth or GH_COPILOT_INSTRUCTIONS_TOKEN", plur(n, "source stores", "sources store"))}
-	}
-	return checkResult{statusOK, label, "None stored in your config"}
 }
 
 func (a *App) checkReachable(srcs []Source, shas map[string]string) checkResult {

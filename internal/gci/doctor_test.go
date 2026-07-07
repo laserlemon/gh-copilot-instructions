@@ -93,9 +93,9 @@ func TestDoctorHealthy(t *testing.T) {
 
 	res := a.diagnose()
 	mustCheck(t, res, "GitHub authentication", statusOK)
-	mustCheck(t, res, "API rate limit", statusOK)
+	mustCheck(t, res, "GitHub API rate limit", statusOK)
 	mustCheck(t, res, "Sources configured", statusOK)
-	mustCheck(t, res, "Sources file permissions", statusOK)
+	mustCheck(t, res, "Configuration file permissions", statusOK)
 	mustCheck(t, res, "Source reachability", statusOK)
 	mustCheck(t, res, "Install directory", statusOK)
 	mustCheck(t, res, "Pulled files", statusOK)
@@ -192,15 +192,6 @@ func TestDoctorFrontmatter(t *testing.T) {
 	}
 	res := a.diagnose()
 	mustCheck(t, res, "applyTo frontmatter", statusWarn)
-}
-
-func TestDoctorInlineToken(t *testing.T) {
-	a := newDoctorApp(t, &fakeFetcher{})
-	if err := a.Paths.AddSource(Source{Repo: "o/r", Token: "ghp_secret"}); err != nil {
-		t.Fatal(err)
-	}
-	res := a.diagnose()
-	mustCheck(t, res, "Inline tokens", statusWarn)
 }
 
 func TestDoctorUpgradeAvailable(t *testing.T) {
