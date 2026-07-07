@@ -28,28 +28,77 @@ func main() {
 func rootCmd() *cobra.Command {
 	var asJSON bool
 	root := &cobra.Command{
-		Use:   "copilot-instructions [<command>]",
+		Use:   "copilot-instructions <command> <subcommand> [flags]",
 		Short: "Sync your Copilot custom instructions to every coding surface",
 		Long: "Install custom Copilot instructions from one or more repositories.\n" +
 			"Locally, instructions apply automatically in Copilot CLI, GitHub Copilot\n" +
 			"app, and VS Code. Instructions apply in Codespaces with additional setup.",
 		Example: heredoc(`
 			$ gh copilot-instructions add laserlemon/my-instructions
-			$ gh copilot-instructions auto-pull --every day
-			$ gh copilot-instructions list`),
+			$ gh copilot-instructions source list
+			$ gh copilot-instructions auto-pull enable --every day`),
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		// With no subcommand, default to `list`. --raw is list-specific, so it's
-		// not offered here; use `list --raw` for the config-file format.
+		// With no subcommand, show the source list once sources are configured;
+		// on a fresh install (no sources) show help, so first-time users get the
+		// full command overview instead of an empty table. --json always lists
+		// (emitting [] when empty) so scripts get machine-readable output.
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !asJSON && !sourcesConfigured() {
+				return cmd.Help()
+			}
 			return runList(asJSON, false)
 		},
 	}
 	root.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
-	root.AddCommand(addCmd(), pullCmd(), listCmd(), removeCmd(), autoPullCmd())
+	// Canonical command groups.
+	root.AddCommand(sourceCmd(), autoPullCmd())
+	// Hidden top-level aliases keep the most-run commands working under their
+	// short names: `gh copilot-instructions add`/`pull` == `... source add`/`pull`.
+	// Each is an independent command instance sharing the same behavior. Keep in
+	// sync with topLevelShortcuts, which documents them in the root help.
+	root.AddCommand(hidden(addCmd()), hidden(pullCmd()))
 	applyGHStyle(root)
 	return root
+}
+
+// sourceCmd is the `source` group: manage the configured instruction sources.
+// Bare `source` defaults to `list`.
+func sourceCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "source <command> [flags]",
+		Short: "Manage instruction sources",
+		Long: "Manage the repositories your instructions are pulled from: list them and\n" +
+			"their state, add one (and pull it), remove one, or pull them all.\n\n" +
+			"Run with no subcommand to list your sources.",
+		Example: heredoc(`
+			$ gh copilot-instructions source add github/team-instructions
+			$ gh copilot-instructions source list
+			$ gh copilot-instructions source pull`),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runList(asJSON, false)
+		},
+	}
+	c.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
+	c.AddCommand(listCmd(), addCmd(), removeCmd(), pullCmd())
+	return c
+}
+
+// hidden marks a command hidden (kept functional but out of help), for the
+// backward-compatible top-level aliases.
+func hidden(c *cobra.Command) *cobra.Command {
+	c.Hidden = true
+	return c
+}
+
+// sourcesConfigured reports whether any sources are configured (via the env var
+// or the local file), so the root command can show help on a fresh install.
+func sourcesConfigured() bool {
+	srcs, origin, _ := gci.DefaultPaths().LoadSources()
+	return origin != gci.OriginNone && len(srcs) > 0
 }
 
 // runList renders the configured sources (the `list` command, and the default
@@ -115,13 +164,13 @@ func pullCmd() *cobra.Command {
 			"\"updated\" (its commit moved), or \"failed\".",
 		Example: heredoc(`
 			# Pull every configured source
-			$ gh copilot-instructions pull
+			$ gh copilot-instructions source pull
 
 			# Pull just one source by id or owner/repo
-			$ gh copilot-instructions pull github/team-instructions
+			$ gh copilot-instructions source pull github/team-instructions
 
 			# List the repos whose commit changed on this pull
-			$ gh copilot-instructions pull --json | jq -r '.[] | select(.state=="updated") | .repo'`),
+			$ gh copilot-instructions source pull --json | jq -r '.[] | select(.state=="updated") | .repo'`),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filter := ""
@@ -146,13 +195,13 @@ func listCmd() *cobra.Command {
 			"GH_COPILOT_INSTRUCTIONS Codespaces secret.",
 		Example: heredoc(`
 			# List configured sources and their state
-			$ gh copilot-instructions list
+			$ gh copilot-instructions source list
 
 			# Emit the config to paste into a Codespaces secret
-			$ gh copilot-instructions list --raw
+			$ gh copilot-instructions source list --raw
 
 			# Machine-readable output for scripting
-			$ gh copilot-instructions list --json | jq -r '.[].repo'`),
+			$ gh copilot-instructions source list --json | jq -r '.[].repo'`),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runList(asJSON, raw)
@@ -177,16 +226,16 @@ func removeCmd() *cobra.Command {
 			"With --json, the remaining sources are reported (like list --json).",
 		Example: heredoc(`
 			# Remove a source by owner/repo
-			$ gh copilot-instructions remove github/team-instructions
+			$ gh copilot-instructions source remove github/team-instructions
 
 			# Remove a specific ref/path variant (the way it was added)
-			$ gh copilot-instructions remove github/team-instructions@main:instructions
+			$ gh copilot-instructions source remove github/team-instructions@main:instructions
 
 			# Remove by slug, from the SLUG column of the list output
-			$ gh copilot-instructions remove a1b2c3d4
+			$ gh copilot-instructions source remove a1b2c3d4
 
 			# Remove everything this extension installed
-			$ gh copilot-instructions remove --all`),
+			$ gh copilot-instructions source remove --all`),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app := newApp()
@@ -226,7 +275,7 @@ func removeCmd() *cobra.Command {
 func autoPullCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
-		Use:   "auto-pull [enable | disable | status]",
+		Use:   "auto-pull <command> [flags]",
 		Short: "Toggle automatic pulling of all sources",
 		Long: "Enable or disable a recurring background pull, so this machine keeps its\n" +
 			"instructions fresh with no manual step. When enabled, macOS (launchd) runs\n" +

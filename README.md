@@ -26,35 +26,41 @@ or restart the desktop app to pick up changes).
 ## Commands
 
 ```
-gh copilot-instructions                                             # (no command) list sources — same as `list`
-gh copilot-instructions add <owner/repo[@ref][:path]> [--token T]   # add a source, then pull
-gh copilot-instructions add --repo R [--ref REF] [--path P] [--token T]
-gh copilot-instructions pull [<id | owner/repo>]                    # pull all configured sources, or just one
-gh copilot-instructions list [--raw]                                # show sources and their pulled state
-gh copilot-instructions remove <slug | owner/repo[@ref][:path]>      # remove one source and prune its files
-gh copilot-instructions remove --all                                # remove every source, all installed files, and config
-gh copilot-instructions auto-pull [status]                          # show whether scheduled pulling is enabled
-gh copilot-instructions auto-pull enable [--every hour|day|week|Nh|Nd|Nw]  # schedule background pulls (default: day)
-gh copilot-instructions auto-pull disable                           # disable scheduled background pulls
+gh copilot-instructions                                                    # list sources (or show help on a fresh install)
+gh copilot-instructions source add <owner/repo[@ref][:path]> [--token T]    # add a source, then pull
+gh copilot-instructions source add --repo R [--ref REF] [--path P] [--token T]
+gh copilot-instructions source pull [<id | owner/repo>]                     # pull all configured sources, or just one
+gh copilot-instructions source list [--raw]                                 # show sources and their pulled state
+gh copilot-instructions source remove <slug | owner/repo[@ref][:path]>       # remove one source and prune its files
+gh copilot-instructions source remove --all                                 # remove every source, all installed files, and config
+gh copilot-instructions auto-pull [status]                                  # show whether scheduled pulling is enabled
+gh copilot-instructions auto-pull enable [--every hour|day|week|Nh|Nd|Nw]   # schedule background pulls (default: day)
+gh copilot-instructions auto-pull disable                                   # disable scheduled background pulls
 ```
+
+The source-management commands live under `source` (`source list`, `source add`, `source pull`,
+`source remove`). For convenience the bare `add` and `pull` names still work as top-level aliases for
+`source add` and `source pull`. Running `gh copilot-instructions` with no command lists your sources
+once any are configured, and shows help on a fresh install.
 
 Every command accepts `--json` for machine-readable output. On a terminal the JSON is pretty-printed
 and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly into `jq`.
 
-- **`add`** takes a positional spec, the equivalent flags, or a mix (a flag overrides the matching
-  part of the spec). A glob `path` must be quoted. Paths are repo-root-relative (a leading `/` is fine).
-- **`pull`** is incremental: it resolves each source's current commit SHA and **skips** any source
-  that's already up to date (and self-heals if installed files go missing).
-- **`list`** prints an aligned table on a terminal and tab-separated values when piped. The first
-  column shows each source's state — `✓ PULLED`, `• PENDING`, or `× FAILED` (failed means the last
-  pull matched no files or its installed files are missing). Use `--json` for structured output, or
-  `--raw` to print the sources in config-file format (one per line, with any inline tokens) — ready to
-  paste into the multiline `GH_COPILOT_INSTRUCTIONS` Codespaces secret.
-- **`remove`** identifies a source the same way `add` does — an `owner/repo[@ref][:path]` spec, a
-  GitHub blob URL, or `--repo`/`--ref`/`--path` flags — or by its **slug** (the `SLUG` column of
-  `list`). `remove` / `remove --all` only ever delete files this tool installed (they live under the
-  `~/.copilot/instructions/gh-copilot-instructions/` directory) — your own hand-written instruction
-  files are never touched.
+- **`source add`** takes a positional spec, the equivalent flags, or a mix (a flag overrides the
+  matching part of the spec). A glob `path` must be quoted. Paths are repo-root-relative (a leading `/`
+  is fine).
+- **`source pull`** is incremental: it resolves each source's current commit SHA and **skips** any
+  source that's already up to date (and self-heals if installed files go missing).
+- **`source list`** prints an aligned table on a terminal and tab-separated values when piped. The
+  first column shows each source's state — `✓ PULLED`, `• PENDING`, or `× FAILED` (failed means the
+  last pull matched no files or its installed files are missing). Use `--json` for structured output,
+  or `--raw` to print the sources in config-file format (one per line, with any inline tokens) — ready
+  to paste into the multiline `GH_COPILOT_INSTRUCTIONS` Codespaces secret.
+- **`source remove`** identifies a source the same way `source add` does — an `owner/repo[@ref][:path]`
+  spec, a GitHub blob URL, or `--repo`/`--ref`/`--path` flags — or by its **slug** (the `SLUG` column
+  of `source list`). `source remove` / `source remove --all` only ever delete files this tool installed
+  (they live under the `~/.copilot/instructions/gh-copilot-instructions/` directory) — your own
+  hand-written instruction files are never touched.
 - **`auto-pull`** enables or disables scheduled background pulling (`enable` / `disable` / `status`).
   See [Keep it fresh with auto-pull](#keep-it-fresh-with-auto-pull).
 
@@ -99,16 +105,16 @@ Other variables: `GH_COPILOT_INSTRUCTIONS_TOKEN` (fallback token), `GH_COPILOT_I
 
 ## Use it everywhere
 
-- **Local machine:** run the two install commands above. Re-run `gh copilot-instructions pull` to
+- **Local machine:** run the two install commands above. Re-run `gh copilot-instructions source pull` to
   refresh.
 - **New Codespaces (zero-touch):** add a multiline **Codespaces secret** named
   `GH_COPILOT_INSTRUCTIONS` (one source per line, with an inline token for any private source). The
-  quickest way to produce that value is to run `gh copilot-instructions list --raw` on your machine
+  quickest way to produce that value is to run `gh copilot-instructions source list --raw` on your machine
   and paste the output (add tokens for any private repos). Then put these two lines in your dotfiles
   install script:
   ```bash
   gh extension install laserlemon/gh-copilot-instructions
-  gh copilot-instructions pull
+  gh copilot-instructions source pull
   ```
   Every new codespace then self-installs your instructions with no prompts.
 - **VS Code / desktop app:** nothing to configure. The desktop app reads `~/.copilot/instructions/`;
@@ -131,14 +137,14 @@ gh copilot-instructions auto-pull disable          # disable
 count, so `h`, `3h`, `day`, `2d`, and `1w` are all valid. The default is `day`, and the clock starts
 when you run `enable`.
 
-When enabled, a recurring job runs `gh copilot-instructions pull` at that cadence, using the absolute
+When enabled, a recurring job runs `gh copilot-instructions source pull` at that cadence, using the absolute
 path to `gh` so it works regardless of the scheduler's `PATH`. Output is logged to
 `~/.local/state/gh-copilot-instructions/auto-pull.log`.
 
 - **macOS** is supported today, via a **launchd** LaunchAgent
   (`~/Library/LaunchAgents/com.github.laserlemon.gh-copilot-instructions.plist`).
 - **Linux / Windows** aren't wired up yet — the command tells you so and points you at scheduling
-  `gh copilot-instructions pull` yourself (cron, Task Scheduler).
+  `gh copilot-instructions source pull` yourself (cron, Task Scheduler).
 
 `auto-pull status` reconciles the recorded setting against the actual launchd job and warns if they've
 drifted apart (for example, if the agent was removed by hand). Pulls run non-interactively, so the

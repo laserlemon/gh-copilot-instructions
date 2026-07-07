@@ -7,6 +7,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// topLevelShortcuts documents the hidden top-level aliases shown in the root
+// help's SHORTCUTS section. Keep in sync with the hidden alias commands
+// registered in rootCmd.
+var topLevelShortcuts = []struct{ Alias, Equiv string }{
+	{"add", "source add"},
+	{"pull", "source pull"},
+}
+
 // applyGHStyle makes the command tree render help the way built-in gh commands
 // do: uppercase section headers (USAGE, COMMANDS, FLAGS, EXAMPLES, LEARN MORE),
 // a "gh "-prefixed usage line, and a "--help" flag described as "Show help for
@@ -60,6 +68,21 @@ func ghUsageBody(w io.Writer, c *cobra.Command) {
 		}
 		for _, s := range subs {
 			fmt.Fprintf(w, "  %-*s  %s\n", pad, s.Name()+":", s.Short)
+		}
+	}
+
+	// SHORTCUTS lists the hidden top-level aliases and what they expand to. It's
+	// only meaningful on the root command, where those aliases live.
+	if c.Parent() == nil && len(topLevelShortcuts) > 0 {
+		fmt.Fprint(w, "\nSHORTCUTS\n")
+		pad := 0
+		for _, s := range topLevelShortcuts {
+			if n := len(s.Alias) + 1; n > pad { // +1 for the trailing colon
+				pad = n
+			}
+		}
+		for _, s := range topLevelShortcuts {
+			fmt.Fprintf(w, "  %-*s  Alias for `%s`\n", pad, s.Alias+":", s.Equiv)
 		}
 	}
 

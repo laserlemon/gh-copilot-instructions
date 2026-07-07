@@ -202,6 +202,7 @@ func launchdPlist(label, gh, logPath string, c Cadence) string {
 	<array>
 		<string>` + esc(gh) + `</string>
 		<string>copilot-instructions</string>
+		<string>source</string>
 		<string>pull</string>
 	</array>
 	<key>StartInterval</key>
@@ -226,7 +227,7 @@ func (unsupportedScheduler) Supported() bool          { return false }
 func (unsupportedScheduler) Installed() (bool, error) { return false, nil }
 
 func (unsupportedScheduler) unsupported() error {
-	return fmt.Errorf("auto-pull is macOS-only for now. On %s, schedule gh copilot-instructions pull yourself with cron or Task Scheduler", runtime.GOOS)
+	return fmt.Errorf("auto-pull is macOS-only for now. On %s, schedule gh copilot-instructions source pull yourself with cron or Task Scheduler", runtime.GOOS)
 }
 
 func (u unsupportedScheduler) Enable(Cadence) error { return u.unsupported() }
@@ -319,7 +320,7 @@ func (a *App) AutoPullStatus(asJSON bool) error {
 //
 //	✓ Auto-pull is enabled to pull every 3 hours.
 //
-//	Runs: gh copilot-instructions pull
+//	Runs: gh copilot-instructions source pull
 //	Log: ~/.local/state/gh-copilot-instructions/auto-pull.log
 //
 //	✗ Auto-pull is disabled.
@@ -331,7 +332,7 @@ func (a *App) printAutoPull(st *State) {
 	if !sc.Supported() {
 		a.warn("Auto-pull isn't supported on %s yet (macOS only for now).", sc.Kind())
 		a.blank()
-		a.dim("Schedule it yourself with cron or Task Scheduler: gh copilot-instructions pull")
+		a.dim("Schedule it yourself with cron or Task Scheduler: gh copilot-instructions source pull")
 		return
 	}
 	enabled := st.AutoPull != nil && st.AutoPull.Enabled
@@ -345,7 +346,7 @@ func (a *App) printAutoPull(st *State) {
 		if srcs, origin, _ := a.Paths.LoadSources(); origin == OriginNone || len(srcs) == 0 {
 			a.note("No sources are configured yet. Add a source: gh copilot-instructions add <owner/repo>")
 		}
-		a.dim("Runs: gh copilot-instructions pull")
+		a.dim("Runs: gh copilot-instructions source pull")
 		a.dim("Log: %s", filepath.Join(a.Paths.StateDir, "auto-pull.log"))
 		return
 	}
