@@ -310,9 +310,8 @@ func autoPullCmd() *cobra.Command {
 		Use:   "auto-pull <command> [flags]",
 		Short: "Toggle automatic pulling of all sources",
 		Long: "Enable or disable a recurring background pull, so this machine keeps its\n" +
-			"instructions fresh with no manual step. When enabled, macOS (launchd) runs\n" +
-			"gh copilot-instructions pull on a cadence. macOS only for now. Other\n" +
-			"platforms print how to schedule it themselves.",
+			"instructions up-to-date automatically. When enabled, macOS (launchd)\n" +
+			"runs `gh copilot-instructions pull` on a regular cadence. Mac only.",
 		Example: heredoc(`
 			# Show whether auto-pull is enabled and how often it runs
 			$ gh copilot-instructions auto-pull
