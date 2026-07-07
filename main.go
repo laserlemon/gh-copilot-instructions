@@ -122,10 +122,7 @@ func fileListCmd() *cobra.Command {
 		Long: "List every instruction file installed from your configured sources,\n" +
 			"with the source each came from.",
 		Example: heredoc(`
-			# List installed files (aligned table on a terminal, TSV when piped)
 			$ gh copilot-instructions file list
-
-			# Machine-readable output
 			$ gh copilot-instructions file list --json | jq -r '.[].remotePath'`),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
