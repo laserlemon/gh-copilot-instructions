@@ -56,7 +56,7 @@ func rootCmd() *cobra.Command {
 	}
 	root.PersistentFlags().BoolVarP(&jsonOut, "json", "j", false, "Output JSON")
 	// Canonical command groups.
-	root.AddCommand(sourceCmd(), fileCmd(), autoPullCmd())
+	root.AddCommand(sourceCmd(), fileCmd(), autoPullCmd(), doctorCmd())
 	// Hidden top-level aliases keep common commands reachable under short names
 	// (e.g. `add` == `source add`, `sources` == `source list`). Each is an
 	// independent command instance sharing the same behavior; the alias helper
@@ -128,6 +128,27 @@ func fileListCmd() *cobra.Command {
 		},
 	}
 	return c
+}
+
+// doctorCmd is the `doctor` command: a read-only health check of the whole
+// setup (auth, sources, install dir, files, VS Code mirror, auto-pull, ...).
+func doctorCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "doctor",
+		Short: "Diagnose your setup and suggest fixes",
+		Long: "Run read-only health checks and report what's wrong and how to fix it. Each row\n" +
+			"is a check with a status, the finding, and the command to run to fix it. Some\n" +
+			"checks talk to GitHub (verifying your token, that every source is reachable, and\n" +
+			"whether any have updates). Exits non-zero if any check fails, so it's usable in\n" +
+			"scripts and CI.",
+		Example: heredoc(`
+			$ gh copilot-instructions doctor
+			$ gh copilot-instructions doctor --json | jq -r '.[] | select(.status!="ok")'`),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return newApp().Doctor(jsonOut)
+		},
+	}
 }
 
 // alias turns a command builder into a hidden top-level alias: it renames the

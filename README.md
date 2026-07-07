@@ -35,6 +35,7 @@ gh copilot-instructions source remove --all                                 # re
 gh copilot-instructions auto-pull [status]                                  # show whether scheduled pulling is enabled
 gh copilot-instructions auto-pull enable [--every hour|day|week|Nh|Nd|Nw]   # schedule background pulls (default: day)
 gh copilot-instructions auto-pull disable                                   # disable scheduled background pulls
+gh copilot-instructions doctor [--json]                                     # run health checks and suggest fixes
 ```
 
 The source-management commands live under `source` (`source list`, `source add`, `source pull`,
@@ -63,6 +64,11 @@ and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly i
   hand-written instruction files are never touched.
 - **`auto-pull`** enables or disables scheduled background pulling (`enable` / `disable` / `status`).
   See [Keep it fresh with auto-pull](#keep-it-fresh-with-auto-pull).
+- **`doctor`** runs read-only health checks and prints a table of `STATUS` / `CHECK` / `FIX` rows —
+  covering GitHub auth, whether your sources are configured and reachable, the install directory,
+  installed files (missing or orphaned), the VS Code mirror, and auto-pull. Some checks call GitHub
+  (verifying your token, reachability, and available updates). It exits non-zero if any check fails,
+  so it works in scripts and CI; use `--json` for structured output.
 
 
 ## Sources & configuration

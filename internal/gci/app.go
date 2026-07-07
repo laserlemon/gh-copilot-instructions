@@ -33,6 +33,7 @@ type fetcher interface {
 type App struct {
 	Paths Paths
 	F     fetcher
+	Probe accountProbe // GitHub account/rate-limit probe for doctor (nil => real API)
 	Sched scheduler    // OS scheduler for auto-pull (nil => resolved per-platform)
 	Out   io.Writer    // data (stdout)
 	Err   io.Writer    // progress / messages (stderr)
