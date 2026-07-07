@@ -31,13 +31,14 @@ type fetcher interface {
 
 // App holds the wiring for a command invocation.
 type App struct {
-	Paths Paths
-	F     fetcher
-	Probe accountProbe // GitHub account/rate-limit probe for doctor (nil => real API)
-	Sched scheduler    // OS scheduler for auto-pull (nil => resolved per-platform)
-	Out   io.Writer    // data (stdout)
-	Err   io.Writer    // progress / messages (stderr)
-	CS    *ColorScheme // color scheme for Err (stderr) messages
+	Paths   Paths
+	F       fetcher
+	Probe   accountProbe // GitHub account/rate-limit probe for doctor (nil => real API)
+	Version string       // extension release version ("dev" for source builds); used by doctor's upgrade check
+	Sched   scheduler    // OS scheduler for auto-pull (nil => resolved per-platform)
+	Out     io.Writer    // data (stdout)
+	Err     io.Writer    // progress / messages (stderr)
+	CS      *ColorScheme // color scheme for Err (stderr) messages
 
 	// outTTY/outColor describe stdout, so --json output is pretty-printed and
 	// syntax-highlighted on a terminal and stays compact when piped (matching

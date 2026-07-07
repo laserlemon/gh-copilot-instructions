@@ -24,3 +24,6 @@ jobs:
           # automatically once the repository is made public — no edit needed.
           generate_attestations: ${{ !github.event.repository.private }}
           go_version_file: go.mod
+          # Stamp the release tag into the binary so `doctor` can tell whether an
+          # upgrade is available (read from main.version).
+          go_build_options: -ldflags=-X=main.version=${{ github.ref_name }}

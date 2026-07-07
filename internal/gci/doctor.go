@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/cli/go-gh/v2/pkg/tableprinter"
@@ -38,7 +39,12 @@ const (
 type accountProbe interface {
 	Whoami(token string) (login string, err error)
 	RateLimit(token string) (remaining, limit int, err error)
+	LatestRelease(token string) (tag string, err error)
 }
+
+// extensionRepo is this extension's own repository, queried for the latest
+// release when checking whether an upgrade is available.
+const extensionRepo = "laserlemon/gh-copilot-instructions"
 
 // apiProbe is the real accountProbe, talking to the GitHub REST API.
 type apiProbe struct{}
@@ -74,6 +80,20 @@ func (apiProbe) RateLimit(token string) (int, int, error) {
 		return 0, 0, err
 	}
 	return rl.Resources.Core.Remaining, rl.Resources.Core.Limit, nil
+}
+
+func (apiProbe) LatestRelease(token string) (string, error) {
+	client, err := newClient(token)
+	if err != nil {
+		return "", err
+	}
+	var rel struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := client.Get("repos/"+extensionRepo+"/releases/latest", &rel); err != nil {
+		return "", err
+	}
+	return rel.TagName, nil
 }
 
 func (a *App) probe() accountProbe {
@@ -119,6 +139,7 @@ func (a *App) diagnose() []checkResult {
 	reach := a.checkReachable(srcs, shas)
 
 	return []checkResult{
+		a.checkUpgrade(token),
 		a.checkAuth(token),
 		a.checkRateLimit(token),
 		a.checkSources(srcs, origin, serr),
@@ -142,6 +163,22 @@ func (a *App) diagnose() []checkResult {
 //
 // Each returns a checkResult with a fixed Check label; the Note holds the
 // dynamic detail (and, when there's a problem, the command to fix it).
+
+func (a *App) checkUpgrade(token string) checkResult {
+	const label = "Extension version"
+	cur := a.Version
+	if cur == "" || cur == "dev" {
+		return checkResult{statusNA, label, "Built from source (no released version to compare)"}
+	}
+	latest, err := a.probe().LatestRelease(token)
+	if err != nil || latest == "" {
+		return checkResult{statusNA, label, "Couldn't check for a newer release"}
+	}
+	if semverLess(cur, latest) {
+		return checkResult{statusWarn, label, fmt.Sprintf("%s is available (you have %s). Run gh extension upgrade gh-copilot-instructions", latest, cur)}
+	}
+	return checkResult{statusOK, label, fmt.Sprintf("Up to date (%s)", cur)}
+}
 
 func (a *App) checkAuth(token string) checkResult {
 	const label = "GitHub authentication"
@@ -574,6 +611,43 @@ func dedupe(s []string) []string {
 		}
 	}
 	return out
+}
+
+// semverLess reports whether version a is older than b. Each may carry a leading
+// "v" and an optional "-prerelease" suffix; the major.minor.patch core is
+// compared numerically, and a release outranks a same-core prerelease.
+func semverLess(a, b string) bool {
+	ac, ap := splitVersion(a)
+	bc, bp := splitVersion(b)
+	for i := 0; i < 3; i++ {
+		if ac[i] != bc[i] {
+			return ac[i] < bc[i]
+		}
+	}
+	switch {
+	case ap == "" && bp != "": // a is the release, b a prerelease -> a is newer
+		return false
+	case ap != "" && bp == "":
+		return true
+	default:
+		return ap < bp
+	}
+}
+
+// splitVersion parses "v1.2.3-rc.1" into its numeric core [1,2,3] and prerelease
+// ("rc.1"). Missing or non-numeric parts read as 0.
+func splitVersion(v string) (core [3]int, pre string) {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexByte(v, '-'); i >= 0 {
+		v, pre = v[:i], v[i+1:]
+	}
+	for i, p := range strings.SplitN(v, ".", 3) {
+		if i > 2 {
+			break
+		}
+		core[i], _ = strconv.Atoi(strings.TrimSpace(p))
+	}
+	return core, pre
 }
 
 // orphanFiles returns install-dir files (relative to InstallDir) under our

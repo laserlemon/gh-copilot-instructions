@@ -27,6 +27,12 @@ func main() {
 
 // jsonOut is bound to the persistent --json flag on the root command, so every
 // command inherits a single --json (shown under INHERITED FLAGS on subcommands).
+// version is the extension's release version, injected at build time by the
+// release workflow (-ldflags -X main.version=<tag>). It stays "dev" for local /
+// source builds, which the doctor's upgrade check treats as "no version to
+// compare".
+var version = "dev"
+
 var jsonOut bool
 
 func rootCmd() *cobra.Command {
@@ -183,7 +189,11 @@ func runList(asJSON, raw bool) error {
 	return newApp().RenderList(asJSON, raw)
 }
 
-func newApp() *gci.App { return gci.New(os.Stdout, os.Stderr) }
+func newApp() *gci.App {
+	a := gci.New(os.Stdout, os.Stderr)
+	a.Version = version
+	return a
+}
 
 func addCmd() *cobra.Command {
 	var ref, path, token string

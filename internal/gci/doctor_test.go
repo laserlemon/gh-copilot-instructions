@@ -12,10 +12,13 @@ type fakeProbe struct {
 	login    string
 	err      error
 	rem, lim int
+	latest   string
+	relErr   error
 }
 
-func (p fakeProbe) Whoami(string) (string, error)      { return p.login, p.err }
-func (p fakeProbe) RateLimit(string) (int, int, error) { return p.rem, p.lim, nil }
+func (p fakeProbe) Whoami(string) (string, error)        { return p.login, p.err }
+func (p fakeProbe) RateLimit(string) (int, int, error)   { return p.rem, p.lim, nil }
+func (p fakeProbe) LatestRelease(string) (string, error) { return p.latest, p.relErr }
 
 // testSched is a scheduler stub so doctor's auto-pull check is deterministic
 // (unsupported => the check is skipped) regardless of the host machine.
@@ -41,7 +44,8 @@ func newDoctorApp(t *testing.T, f fetcher) *App {
 	t.Helper()
 	a := newTestApp(t, f)
 	t.Setenv("GH_TOKEN", "x-test-token")
-	a.Probe = fakeProbe{login: "octocat", rem: 5000, lim: 5000}
+	a.Version = "v1.0.0"
+	a.Probe = fakeProbe{login: "octocat", rem: 5000, lim: 5000, latest: "v1.0.0"}
 	a.Sched = testSched{}
 	return a
 }
@@ -197,6 +201,41 @@ func TestDoctorInlineToken(t *testing.T) {
 	}
 	res := a.diagnose()
 	mustCheck(t, res, "Inline tokens", statusWarn)
+}
+
+func TestDoctorUpgradeAvailable(t *testing.T) {
+	a := newDoctorApp(t, &fakeFetcher{})
+	a.Version = "v1.0.0"
+	a.Probe = fakeProbe{login: "octocat", rem: 5000, lim: 5000, latest: "v1.2.0"}
+	res := a.diagnose()
+	mustCheck(t, res, "Extension version", statusWarn)
+}
+
+func TestDoctorUpgradeDevBuild(t *testing.T) {
+	a := newDoctorApp(t, &fakeFetcher{})
+	a.Version = "dev"
+	res := a.diagnose()
+	mustCheck(t, res, "Extension version", statusNA)
+}
+
+func TestSemverLess(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"v1.0.0", "v1.0.1", true},
+		{"v1.2.0", "v1.10.0", true}, // numeric, not lexical
+		{"v1.0.0", "v1.0.0", false},
+		{"v2.0.0", "v1.9.9", false},
+		{"v1.0.0-rc.1", "v1.0.0", true}, // prerelease is older than release
+		{"v1.0.0", "v1.0.0-rc.1", false},
+		{"1.0.0", "v1.0.1", true}, // leading v optional
+	}
+	for _, c := range cases {
+		if got := semverLess(c.a, c.b); got != c.want {
+			t.Errorf("semverLess(%q,%q)=%v, want %v", c.a, c.b, got, c.want)
+		}
+	}
 }
 
 func TestPlur(t *testing.T) {
