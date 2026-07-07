@@ -78,8 +78,8 @@ func sourceCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "source <command> [flags]",
 		Short: "Manage instruction sources",
-		Long: "Manage the repositories your instructions are pulled from: list them and\n" +
-			"their state, add one (and pull it), remove one, or pull them all.\n\n" +
+		Long: "Manage the repositories your instructions are pulled from: list them, pull\n" +
+			"them, add one (and pull it), or remove one (or all of them).\n\n" +
 			"Run with no subcommand to list your sources.",
 		Example: heredoc(`
 			$ gh copilot-instructions source add acme/team-instructions
@@ -170,8 +170,8 @@ func addCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add [<owner/repo> | <blob-url>]",
 		Short: "Add a source and pull it",
-		Long: "Add a source, then pull. Give the source as OWNER/REPO or a GitHub blob\n" +
-			"URL. With OWNER/REPO, --ref and --path select a ref and a path within the\n" +
+		Long: "Add a source, then pull. Give the source as owner/repo or a GitHub blob\n" +
+			"URL. With owner/repo, --ref and --path select a ref and a path within the\n" +
 			"repository; a blob URL already carries its ref and path, so those flags\n" +
 			"are ignored. Quote a glob path.\n\n" +
 			"Your gh auth is used by default. If gh cannot access a repository, you may\n" +
@@ -207,17 +207,15 @@ func addCmd() *cobra.Command {
 
 func pullCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "pull [<id | owner/repo>]",
+		Use:   "pull [<slug> | <owner/repo>]",
 		Short: "Pull one or all sources",
-		Long: "Pull all configured sources, or just the one matching the given id or\n" +
-			"owner/repo.\n\n" +
-			"With --json, each source is reported with a state of \"pulled\",\n" +
-			"\"updated\" (its commit moved), or \"failed\".",
+		Long: "Pull all configured sources, or just the one matching the given slug\n" +
+			"or owner/repo.",
 		Example: heredoc(`
 			# Pull every configured source
 			$ gh copilot-instructions source pull
 
-			# Pull just one source by id or owner/repo
+			# Pull just one source by slug or owner/repo
 			$ gh copilot-instructions source pull acme/team-instructions
 
 			# List the repos whose commit changed on this pull
@@ -239,18 +237,10 @@ func listCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "list",
 		Short: "List all sources and their states",
-		Long: "List all sources and their states.\n\n" +
-			"Use --raw to print the sources in config-file format (one per line,\n" +
-			"including any inline tokens) - ready to paste into the multiline\n" +
-			"GH_COPILOT_INSTRUCTIONS Codespaces secret.",
+		Long:  "List all sources and their states.",
 		Example: heredoc(`
-			# List configured sources and their state
 			$ gh copilot-instructions source list
-
-			# Emit the config to paste into a Codespaces secret
 			$ gh copilot-instructions source list --raw
-
-			# Machine-readable output for scripting
 			$ gh copilot-instructions source list --json | jq -r '.[].repository'`),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -269,7 +259,7 @@ func removeCmd() *cobra.Command {
 		Short: "Remove one source and its files, or --all",
 		Long: "Remove one configured source and prune the files it installed, or use\n" +
 			"--all to remove every source, all installed files, and the local config.\n\n" +
-			"Identify the source the way you added it: OWNER/REPO (optionally with\n" +
+			"Identify the source the way you added it: owner/repo (optionally with\n" +
 			"--ref/--path), a GitHub blob URL, or its slug (the SLUG column of the\n" +
 			"list output).\n\n" +
 			"With --json, the remaining sources are reported (like list --json).",
@@ -299,9 +289,9 @@ func removeCmd() *cobra.Command {
 				return app.RemoveAll(jsonOut)
 			}
 			if arg == "" {
-				return fmt.Errorf("specify OWNER/REPO, a GitHub blob URL, or a slug to remove, or use --all")
+				return fmt.Errorf("specify owner/repo, a GitHub blob URL, or a slug to remove, or use --all")
 			}
-			// OWNER/REPO and blob URLs contain a slash; a slug never does.
+			// owner/repo and blob URLs contain a slash; a slug never does.
 			if strings.Contains(arg, "/") {
 				s, err := buildRemoveTarget(arg, ref, path)
 				if err != nil {
@@ -310,7 +300,7 @@ func removeCmd() *cobra.Command {
 				return app.Remove(s.Spec(), jsonOut)
 			}
 			if ref != "" || path != "" {
-				return fmt.Errorf("--ref and --path apply to OWNER/REPO, not a slug")
+				return fmt.Errorf("--ref and --path apply to owner/repo, not a slug")
 			}
 			return app.Remove(arg, jsonOut)
 		},
@@ -407,7 +397,7 @@ func heredoc(s string) string {
 // buildSource builds a source for `add` from a positional argument plus flags.
 // The argument is either a GitHub blob URL - which carries its own ref and path,
 // so --ref/--path are ignored and ResolveSpec disambiguates a slashed branch
-// name against the API - or a bare OWNER/REPO, whose ref and path come from the
+// name against the API - or a bare owner/repo, whose ref and path come from the
 // flags. (Gist support will slot in here as another recognized form.)
 func buildSource(arg, ref, path, token string) (gci.Source, error) {
 	if gci.IsGitHubURL(arg) {
@@ -432,7 +422,7 @@ func buildSource(arg, ref, path, token string) (gci.Source, error) {
 }
 
 // buildRemoveTarget builds the source to remove from a positional argument plus
-// flags. Like buildSource it accepts a blob URL or a bare OWNER/REPO, but it
+// flags. Like buildSource it accepts a blob URL or a bare owner/repo, but it
 // resolves offline (ParseSpec), because remove only needs to identify an
 // already-configured source and must never require the network; the slug is the
 // escape hatch for the rare slashed-ref blob URL.

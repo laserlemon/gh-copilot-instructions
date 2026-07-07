@@ -31,29 +31,29 @@ const DefaultPath = "**/*.instructions.md"
 const FileDir = "gh-copilot-instructions"
 
 // IsGitHubURL reports whether arg looks like a github.com web URL (with or
-// without an http(s) scheme), as opposed to a bare OWNER/REPO argument. The
+// without an http(s) scheme), as opposed to a bare owner/repo argument. The
 // source commands use it to decide how to parse a positional argument: a URL
-// carries its own ref and path, while OWNER/REPO takes them from flags.
+// carries its own ref and path, while owner/repo takes them from flags.
 func IsGitHubURL(arg string) bool {
 	u := strings.TrimSpace(arg)
 	u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
 	return strings.HasPrefix(u, "github.com/")
 }
 
-// ParseRepo parses a bare "OWNER/REPO" argument - the CLI input form for the
+// ParseRepo parses a bare "owner/repo" argument - the CLI input form for the
 // source commands. It rejects the older combined forms (an @ref or :path suffix,
 // a GitHub blob URL); a ref or path within the repo is given with the --ref and
 // --path flags instead.
 func ParseRepo(arg string) (Source, error) {
 	r := strings.TrimSpace(arg)
 	if r == "" {
-		return Source{}, fmt.Errorf("a repository is required (OWNER/REPO)")
+		return Source{}, fmt.Errorf("a repository is required (owner/repo)")
 	}
 	if strings.ContainsAny(r, "@: \t") || strings.Contains(r, "//") {
-		return Source{}, fmt.Errorf("provide just OWNER/REPO; use --ref and --path for a ref or path within the repository")
+		return Source{}, fmt.Errorf("provide just owner/repo; use --ref and --path for a ref or path within the repository")
 	}
 	if !validRepo(r) {
-		return Source{}, fmt.Errorf("invalid repository %q (expected OWNER/REPO)", r)
+		return Source{}, fmt.Errorf("invalid repository %q (expected owner/repo)", r)
 	}
 	return Source{Repo: r}, nil
 }

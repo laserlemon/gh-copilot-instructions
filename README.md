@@ -28,7 +28,7 @@ or restart the desktop app to pick up changes).
 ```
 gh copilot-instructions                                                    # list sources (or show help on a fresh install)
 gh copilot-instructions source add [<owner/repo> | <blob-url>] [--ref REF] [--path P] [--token T]
-gh copilot-instructions source pull [<id | owner/repo>]                     # pull all configured sources, or just one
+gh copilot-instructions source pull [<slug> | <owner/repo>]                 # pull all configured sources, or just one
 gh copilot-instructions source list [--raw]                                 # show sources and their pulled state
 gh copilot-instructions source remove [<owner/repo> | <blob-url> | <slug>]  # remove one source and prune its files
 gh copilot-instructions source remove --all                                 # remove every source, all installed files, and config
@@ -161,7 +161,7 @@ VS Code reads user-level instructions from its **own** profile directory — `Us
 your instructions into its prompts directory (and `remove` prunes it):
 
 ```
-<VS Code User dir>/prompts/gh-copilot-instructions/<id>/<file>.instructions.md
+<VS Code User dir>/prompts/gh-copilot-instructions/<slug>/<file>.instructions.md
 ```
 
 - **Detected editors:** Stable (`Code`), Insiders (`Code - Insiders`), and VSCodium, on macOS, Linux,
@@ -196,10 +196,10 @@ new.
 Matched files are written under a single namespace directory, mirroring each source's repo layout:
 
 ```
-~/.copilot/instructions/gh-copilot-instructions/<id>/<repo-relative-path>
+~/.copilot/instructions/gh-copilot-instructions/<slug>/<repo-relative-path>
 ```
 
-- `<id>` is the source's deterministic id (`sha256(owner/repo + ref + path)`, first 8 base36 chars), so
+- `<slug>` is the source's deterministic slug (`sha256(owner/repo + ref + path)`, first 8 base36 chars), so
   every source gets its own subtree for clean pruning and removal.
 - The repo-relative directory structure is preserved, and content is copied **verbatim**. Each file
   name is normalized to a clean `*.instructions.md` (drop a trailing `.md`, then a trailing

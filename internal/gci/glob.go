@@ -78,7 +78,7 @@ func instructionsName(name string) string {
 // repo's directory structure under a per-source namespace and ensures the file
 // ends in ".instructions.md":
 //
-//	gh-copilot-instructions/<id>/<repo-relative-dir>/<name>.instructions.md
+//	gh-copilot-instructions/<slug>/<repo-relative-dir>/<name>.instructions.md
 //
 // Returns "" for an unsafe path (one containing a ".." component).
 func (s Source) DestPath(rel string) string {

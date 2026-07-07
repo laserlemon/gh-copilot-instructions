@@ -956,8 +956,8 @@ func them(n int) string {
 
 // isOurs reports whether a path (relative to the install dir) is one we manage,
 // so prune/remove never touch the user's own hand-written instruction files. It
-// recognizes both the nested layout ("gh-copilot-instructions/<id>/...") and
-// legacy flat files ("gh-copilot-instructions.<id>.<name>.instructions.md").
+// recognizes both the nested layout ("gh-copilot-instructions/<slug>/...") and
+// legacy flat files ("gh-copilot-instructions.<slug>.<name>.instructions.md").
 func isOurs(name string) bool {
 	name = filepath.ToSlash(name)
 	nested := strings.HasPrefix(name, FileDir+"/")
