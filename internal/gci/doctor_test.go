@@ -97,7 +97,7 @@ func TestDoctorHealthy(t *testing.T) {
 	mustCheck(t, res, "Sources configured", statusOK)
 	mustCheck(t, res, "Configuration file permissions", statusOK)
 	mustCheck(t, res, "Source reachability", statusOK)
-	mustCheck(t, res, "Install directory", statusOK)
+	mustCheck(t, res, "Instructions file directory", statusOK)
 	mustCheck(t, res, "Pulled files", statusOK)
 
 	if _, _, fail := tally(res); fail != 0 {
@@ -163,7 +163,7 @@ func TestDoctorUpdatesAvailable(t *testing.T) {
 	// Advance the remote commit; the recorded state SHA now lags.
 	a.F.(*fakeFetcher).sha[src.ID()] = "sha2222222222222222222222222222222222222"
 	res := a.diagnose()
-	mustCheck(t, res, "Available updates", statusWarn)
+	mustCheck(t, res, "Available source updates", statusWarn)
 }
 
 func TestDoctorExitNonZeroOnFail(t *testing.T) {

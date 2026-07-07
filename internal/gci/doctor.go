@@ -146,9 +146,9 @@ func (a *App) diagnose() []checkResult {
 		a.checkEnvOverride(),
 		a.checkSourcesPerms(),
 		reach,
+		a.checkInstallDir(),
 		a.checkUpdates(srcs, st, shas, sterr),
 		a.checkFailedSources(srcs, st, sterr),
-		a.checkInstallDir(),
 		a.checkInstalledFiles(st, sterr),
 		a.checkFrontmatter(st, sterr),
 		a.checkLeftoverState(srcs, st, sterr),
@@ -266,7 +266,7 @@ func (a *App) checkReachable(srcs []Source, shas map[string]string) checkResult 
 }
 
 func (a *App) checkUpdates(srcs []Source, st *State, shas map[string]string, sterr error) checkResult {
-	const label = "Available updates"
+	const label = "Available source updates"
 	if sterr != nil {
 		return checkResult{statusNA, label, "State is unreadable"}
 	}
@@ -312,11 +312,11 @@ func (a *App) checkFailedSources(srcs []Source, st *State, sterr error) checkRes
 	if bad > 0 {
 		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d produced no files. Run source pull (check the --path if it persists)", bad, len(srcs))}
 	}
-	return checkResult{statusOK, label, "Every source produced files"}
+	return checkResult{statusOK, label, "Every source produced instructions files"}
 }
 
 func (a *App) checkInstallDir() checkResult {
-	const label = "Install directory"
+	const label = "Instructions file directory"
 	managed := filepath.Join(a.Paths.InstallDir, FileDir)
 	disp := abbrevHome(managed)
 	fi, err := os.Stat(managed)
@@ -369,7 +369,7 @@ func (a *App) checkInstalledFiles(st *State, sterr error) checkResult {
 	if orphans := a.orphanFiles(recorded); len(orphans) > 0 {
 		return checkResult{statusWarn, label, fmt.Sprintf("%s not owned by any source. Run source pull, or delete them", plur(len(orphans), "file is", "files are"))}
 	}
-	return checkResult{statusOK, label, fmt.Sprintf("Every file is present (%s)", plur(total, "file", "files"))}
+	return checkResult{statusOK, label, fmt.Sprintf("Every instructions file is present (%s)", plur(total, "instructions file", "instructions files"))}
 }
 
 func (a *App) checkFrontmatter(st *State, sterr error) checkResult {
@@ -396,11 +396,11 @@ func (a *App) checkFrontmatter(st *State, sterr error) checkResult {
 	if noApply > 0 {
 		return checkResult{statusWarn, label, fmt.Sprintf("%d of %d files have no applyTo (VS Code won't auto-apply them)", noApply, checked)}
 	}
-	return checkResult{statusOK, label, fmt.Sprintf("Every file declares applyTo (%s)", plur(checked, "file", "files"))}
+	return checkResult{statusOK, label, fmt.Sprintf("Every instructions file declares applyTo (%s)", plur(checked, "instructions file", "instructions files"))}
 }
 
 func (a *App) checkLeftoverState(srcs []Source, st *State, sterr error) checkResult {
-	const label = "Removed sources"
+	const label = "Orphaned files"
 	if sterr != nil {
 		return checkResult{statusNA, label, "State is unreadable"}
 	}
@@ -418,13 +418,13 @@ func (a *App) checkLeftoverState(srcs []Source, st *State, sterr error) checkRes
 		}
 	}
 	if stale > 0 {
-		return checkResult{statusWarn, label, fmt.Sprintf("%s pulled but no longer in your config; the files remain. Run source remove <slug>", plur(stale, "source was", "sources were"))}
+		return checkResult{statusWarn, label, fmt.Sprintf("Instructions files from %s remain. Run source remove <slug>", plur(stale, "deleted source", "deleted sources"))}
 	}
-	return checkResult{statusOK, label, "No files from deleted sources"}
+	return checkResult{statusOK, label, "No instructions files from deleted sources"}
 }
 
 func (a *App) checkVSCode() checkResult {
-	const label = "VS Code prompts"
+	const label = "VS Code instructions"
 	dirs := vscodePromptDirs()
 	if len(dirs) == 0 {
 		return checkResult{statusNA, label, "VS Code isn't installed"}
