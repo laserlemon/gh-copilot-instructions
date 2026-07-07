@@ -34,8 +34,9 @@ func rootCmd() *cobra.Command {
 		Use:   "copilot-instructions <command> <subcommand> [flags]",
 		Short: "Sync your Copilot custom instructions to every coding surface",
 		Long: "Install custom Copilot instructions from one or more repositories.\n" +
-			"Locally, instructions apply automatically in Copilot CLI, GitHub Copilot\n" +
-			"app, and VS Code. Instructions apply in Codespaces with additional setup.",
+			"Locally, instructions apply automatically in Copilot CLI, GitHub Copilot app,\n" +
+			"and VS Code.\n" +
+			"Instructions apply in Codespaces with additional setup.",
 		Example: heredoc(`
 			$ gh copilot-instructions add acme/team-instructions
 			$ gh copilot-instructions source list
@@ -78,8 +79,8 @@ func sourceCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "source <command> [flags]",
 		Short: "Manage instruction sources",
-		Long: "Manage the repositories your instructions are pulled from: list them, pull\n" +
-			"them, add one (and pull it), or remove one (or all of them).",
+		Long: "Manage the repositories your instructions are pulled from: list them, pull them,\n" +
+			"add one (and pull it), or remove one (or all of them).",
 		Example: heredoc(`
 			$ gh copilot-instructions source add acme/team-instructions
 			$ gh copilot-instructions source list
@@ -99,8 +100,8 @@ func fileCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "file <command> [flags]",
 		Short: "Show pulled instruction files",
-		Long: "List every instruction file installed from your configured sources,\n" +
-			"with the source each came from.",
+		Long: "List every instruction file installed from your configured sources, with the\n" +
+			"source each came from.",
 		Example: heredoc(`
 			$ gh copilot-instructions file list
 			$ gh copilot-instructions file list --json | jq -r '.[].remotePath'`),
@@ -117,8 +118,8 @@ func fileListCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "list",
 		Short: "List all pulled instruction files",
-		Long: "List every instruction file installed from your configured sources,\n" +
-			"with the source each came from.",
+		Long: "List every instruction file installed from your configured sources, with the\n" +
+			"source each came from.",
 		Example: heredoc(`
 			$ gh copilot-instructions file list
 			$ gh copilot-instructions file list --json | jq -r '.[].remotePath'`),
@@ -168,13 +169,14 @@ func addCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add [<owner/repo> | <blob-url>]",
 		Short: "Add a source and pull it",
-		Long: "Add a source, then pull. Give the source as owner/repo or a GitHub blob\n" +
-			"URL. With owner/repo, --ref and --path select a ref and a path within the\n" +
-			"repository; a blob URL already carries its ref and path, so those flags\n" +
-			"are ignored. Quote a glob path.\n\n" +
-			"Your gh auth is used by default. If gh cannot access a repository, you may\n" +
-			"provide a personal access token (with permission to read repository\n" +
-			"contents) using --token.",
+		Long: "Add a source, then pull.\n" +
+			"Give the source as owner/repo or a GitHub blob URL.\n" +
+			"With owner/repo, --ref and --path select a ref and a path within the repository;\n" +
+			"a blob URL already carries its ref and path, so those flags are ignored.\n" +
+			"Quote a glob path.\n\n" +
+			"Your gh auth is used by default.\n" +
+			"If gh cannot access a repository, you may provide a personal access token (with\n" +
+			"permission to read repository contents) using --token.",
 		Example: heredoc(`
 			# Add a source by owner/repo (default branch, default path: **/*.instructions.md)
 			$ gh copilot-instructions source add acme/team-instructions
@@ -207,8 +209,8 @@ func pullCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "pull [<slug> | <owner/repo>]",
 		Short: "Pull one or all sources",
-		Long: "Pull all configured sources, or just the one matching the given slug\n" +
-			"or owner/repo.",
+		Long: "Pull all configured sources, or just the one matching the given slug or\n" +
+			"owner/repo.",
 		Example: heredoc(`
 			# Pull every configured source
 			$ gh copilot-instructions source pull
@@ -255,11 +257,11 @@ func removeCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "remove [<owner/repo> | <blob-url> | <slug>]",
 		Short: "Remove one source and its files, or --all",
-		Long: "Remove one configured source and prune the files it installed, or use\n" +
-			"--all to remove every source, all installed files, and the local config.\n\n" +
+		Long: "Remove one configured source and prune the files it installed, or use --all to\n" +
+			"remove every source, all installed files, and the local config.\n\n" +
 			"Identify the source the way you added it: owner/repo (optionally with\n" +
-			"--ref/--path), a GitHub blob URL, or its slug (the SLUG column of the\n" +
-			"list output).",
+			"--ref/--path), a GitHub blob URL, or its slug (the SLUG column of the list\n" +
+			"output).",
 		Example: heredoc(`
 			# Remove a source by owner/repo
 			$ gh copilot-instructions source remove acme/team-instructions
@@ -313,8 +315,10 @@ func autoPullCmd() *cobra.Command {
 		Use:   "auto-pull <command> [flags]",
 		Short: "Toggle automatic pulling of all sources",
 		Long: "Enable or disable a recurring background pull, so this machine keeps its\n" +
-			"instructions up-to-date automatically. When enabled, macOS (launchd)\n" +
-			"runs `gh copilot-instructions pull` on a regular cadence. Mac only.",
+			"instructions up-to-date automatically.\n" +
+			"When enabled, macOS (launchd) runs `gh copilot-instructions pull` on a regular\n" +
+			"cadence.\n" +
+			"Mac only.",
 		Example: heredoc(`
 			# Show whether auto-pull is enabled and how often it runs
 			$ gh copilot-instructions auto-pull
@@ -337,8 +341,8 @@ func autoPullCmd() *cobra.Command {
 	enable := &cobra.Command{
 		Use:   "enable",
 		Short: "Enable scheduled background pulling",
-		Long: "Install a recurring job that runs gh copilot-instructions pull. Re-run\n" +
-			"with a different --every to change the cadence. macOS only for now.",
+		Long: "Install a recurring job that runs `gh copilot-instructions pull`.\n" +
+			"Currently Mac only.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cadence, err := gci.ParseCadence(every)
@@ -353,8 +357,8 @@ func autoPullCmd() *cobra.Command {
 	disable := &cobra.Command{
 		Use:   "disable",
 		Short: "Disable scheduled background pulling",
-		Long: "Remove the recurring background pull so it stops running. Sources then\n" +
-			"refresh only when you run `gh copilot-instructions pull` yourself.",
+		Long: "Remove the recurring background pull so it stops running.\n" +
+			"Sources then refresh only when you run `gh copilot-instructions pull` yourself.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return newApp().AutoPullDisable(jsonOut)
@@ -364,8 +368,8 @@ func autoPullCmd() *cobra.Command {
 	status := &cobra.Command{
 		Use:   "status",
 		Short: "Show whether auto-pull is enabled and its cadence",
-		Long: "Report whether scheduled background pulling is enabled and, if so, how\n" +
-			"often it runs.",
+		Long: "Report whether scheduled background pulling is enabled and, if so, how often it\n" +
+			"runs.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return newApp().AutoPullStatus(jsonOut)
