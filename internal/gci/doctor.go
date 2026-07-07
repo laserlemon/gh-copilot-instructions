@@ -167,7 +167,7 @@ func (a *App) checkUpgrade(token string) checkResult {
 	const label = "Extension version"
 	cur := a.Version
 	if cur == "" || cur == "dev" {
-		return checkResult{statusNA, label, "Built from source (no released version to compare)"}
+		return checkResult{statusNA, label, "Built from source"}
 	}
 	latest, err := a.probe().LatestRelease(token)
 	if err != nil || latest == "" {
