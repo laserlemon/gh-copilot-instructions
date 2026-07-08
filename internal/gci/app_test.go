@@ -197,6 +197,45 @@ func TestRemoveAllLeavesUserFile(t *testing.T) {
 	}
 }
 
+// TestRemoveAllPreservesAutoPull guards against remove --all wiping the
+// auto-pull schedule, which shares the state file with the sources. Removing
+// sources must not disturb auto-pull.
+func TestRemoveAllPreservesAutoPull(t *testing.T) {
+	src, _ := ParseSpec("o/r")
+	id := src.ID()
+	a := newTestApp(t, &fakeFetcher{
+		sha:   map[string]string{id: "abc1234def"},
+		files: map[string][]FetchedFile{id: {{Rel: "x.instructions.md", Content: []byte("x")}}},
+	})
+	if err := a.Paths.AddSource(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	// Record an auto-pull schedule in the same state file.
+	st, _ := a.Paths.LoadState()
+	st.AutoPull = &AutoPullState{Enabled: true, Cadence: "1d", UpdatedAt: time.Now().UTC()}
+	if err := a.Paths.Save(st); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.RemoveAll(false); err != nil {
+		t.Fatal(err)
+	}
+
+	st2, err := a.Paths.LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st2.Sources) != 0 {
+		t.Fatalf("sources should be cleared, got %d", len(st2.Sources))
+	}
+	if st2.AutoPull == nil || !st2.AutoPull.Enabled || st2.AutoPull.Cadence != "1d" {
+		t.Fatalf("auto-pull state not preserved across remove --all: %+v", st2.AutoPull)
+	}
+}
+
 func TestRemoveOneByRepo(t *testing.T) {
 	a := newTestApp(t, &fakeFetcher{
 		sha: map[string]string{},
