@@ -195,7 +195,8 @@ func TestRefPinsTo(t *testing.T) {
 	}
 }
 
-// TestParseSpecGitHubURL covers accepting a GitHub blob URL as a source.
+// TestParseSpecGitHubURL covers accepting a GitHub blob or tree URL as a source.
+// A tree URL's directory becomes a prefix over the default glob.
 func TestParseSpecGitHubURL(t *testing.T) {
 	cases := []struct{ spec, repo, ref, path string }{
 		{"https://github.com/o/r/blob/main/path/to/file.md", "o/r", "main", "path/to/file.md"},
@@ -203,6 +204,11 @@ func TestParseSpecGitHubURL(t *testing.T) {
 		{"github.com/o/r", "o/r", "", ""},
 		{"https://github.com/o/r/blob/main/file.md#L5", "o/r", "main", "file.md"},
 		{"https://github.com/o/r/", "o/r", "", ""},
+		{"https://github.com/o/r/tree/main/instructions", "o/r", "main", "instructions/**/*.instructions.md"},
+		{"https://github.com/o/r/tree/-/instructions", "o/r", "", "instructions/**/*.instructions.md"},
+		{"https://github.com/o/r/tree/main/a/b", "o/r", "main", "a/b/**/*.instructions.md"},
+		{"https://github.com/o/r/tree/main", "o/r", "main", "**/*.instructions.md"},
+		{"https://github.com/o/r/tree/-", "o/r", "", "**/*.instructions.md"},
 	}
 	for _, c := range cases {
 		s, err := ParseSpec(c.spec)
@@ -217,7 +223,6 @@ func TestParseSpecGitHubURL(t *testing.T) {
 
 func TestParseSpecGitHubURLErrors(t *testing.T) {
 	for _, spec := range []string{
-		"https://github.com/o/r/tree/main/instructions",
 		"https://github.com/o/r/raw/main/x.md",
 		"https://github.com/onlyowner",
 	} {

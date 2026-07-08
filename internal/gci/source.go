@@ -59,16 +59,20 @@ func ParseRepo(arg string) (Source, error) {
 }
 
 // ParseSpec parses an "owner/repo[@ref][:path]" source spec (no token). A GitHub
-// blob/tree URL (e.g. https://github.com/owner/repo/blob/main/path/file.md) is
-// also accepted and normalized to the same Source.
+// blob or tree URL (e.g. https://github.com/owner/repo/blob/main/path/file.md or
+// https://github.com/owner/repo/tree/main/dir) is also accepted and normalized to
+// the same Source; a tree URL's directory becomes a prefix over the default glob.
 func ParseSpec(spec string) (Source, error) {
 	var s Source
 	rest := strings.TrimSpace(spec)
 	if rest == "" {
 		return s, fmt.Errorf("empty source")
 	}
-	if s, ok, err := parseGitHubURL(rest); ok {
-		return s, err
+	if g, ok, err := parseGitHubURL(rest); ok {
+		if err != nil {
+			return Source{}, err
+		}
+		return g.offline(""), nil
 	}
 	// :path  (first colon; owner/repo and refs never contain ':')
 	if i := strings.IndexByte(rest, ':'); i >= 0 {
@@ -89,24 +93,36 @@ func ParseSpec(spec string) (Source, error) {
 	return s, nil
 }
 
-// parseGitHubURL recognizes a github.com web URL and normalizes it to a Source.
-// It returns ok=false (so ParseSpec falls back to spec parsing) for anything
-// that isn't a github.com URL.
+// githubURL is a parsed github.com web URL - a bare repo, or a blob/tree URL -
+// before any network ref disambiguation. seg holds the path segments after the
+// "owner/repo/<blob|tree>/" prefix: seg[0] is the ref (or "-" for the default
+// branch) and the remainder is the file path (blob) or directory (tree).
+type githubURL struct {
+	repo string
+	kind string // "", "blob", or "tree"
+	seg  []string
+}
+
+// parseGitHubURL recognizes a github.com web URL and returns its parsed form. It
+// returns ok=false (so ParseSpec falls back to spec parsing) for anything that
+// isn't a github.com URL.
 //
 // Supported shapes (scheme optional):
 //
-//	github.com/owner/repo                          -> whole repo, default branch
-//	github.com/owner/repo/blob/<ref>/<path>        -> a file at <ref>
+//	github.com/owner/repo                     -> whole repo, default branch
+//	github.com/owner/repo/blob/<ref>/<path>   -> a file at <ref>
+//	github.com/owner/repo/tree/<ref>/<dir>    -> a directory at <ref>, used as a
+//	                                             path prefix over the glob
 //
-// A ref of "-" means the default branch (GitHub redirects /blob/-/… there), so
-// it maps to an empty Ref. A ref containing a slash (e.g. "feature/x") can't be
-// told apart from the path in a web URL and isn't supported - use the
-// owner/repo@ref:path spec for those. tree/ (directory) URLs are intentionally
-// not accepted yet (no "-" parity, and the target files are under-specified).
-func parseGitHubURL(spec string) (Source, bool, error) {
+// A ref of "-" means the default branch (GitHub redirects /blob/-/... and, since
+// github/github#438511, /tree/-/... there), mapping to an empty Ref. A slashed
+// ref (e.g. "feature/x") can't be split from the path offline: ResolveSpec probes
+// the API to disambiguate, while the offline callers (config lines, remove) treat
+// the first segment as the ref (the slug is the escape hatch for those).
+func parseGitHubURL(spec string) (githubURL, bool, error) {
 	u := strings.TrimPrefix(strings.TrimPrefix(spec, "https://"), "http://")
 	if !strings.HasPrefix(u, "github.com/") {
-		return Source{}, false, nil
+		return githubURL{}, false, nil
 	}
 	u = strings.TrimPrefix(u, "github.com/")
 	if i := strings.IndexAny(u, "?#"); i >= 0 { // drop query / #fragment
@@ -114,26 +130,61 @@ func parseGitHubURL(spec string) (Source, bool, error) {
 	}
 	parts := strings.Split(strings.Trim(u, "/"), "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return Source{}, true, fmt.Errorf("invalid GitHub URL: %q", spec)
+		return githubURL{}, true, fmt.Errorf("invalid GitHub URL: %q", spec)
 	}
-	s := Source{Repo: parts[0] + "/" + parts[1]}
-	if !validRepo(s.Repo) {
-		return s, true, fmt.Errorf("invalid GitHub URL repository: %q", s.Repo)
+	g := githubURL{repo: parts[0] + "/" + parts[1]}
+	if !validRepo(g.repo) {
+		return g, true, fmt.Errorf("invalid GitHub URL repository: %q", g.repo)
 	}
 	if len(parts) >= 3 {
-		if parts[2] != "blob" {
-			return s, true, fmt.Errorf("only blob URLs are supported (not /%s/): %q", parts[2], spec)
+		g.kind = parts[2]
+		if g.kind != "blob" && g.kind != "tree" {
+			return g, true, fmt.Errorf("only blob and tree URLs are supported (not /%s/): %q", g.kind, spec)
 		}
-		if len(parts) >= 4 {
-			if ref := parts[3]; ref != "-" { // "-" => default branch
-				s.Ref = ref
-			}
-		}
-		if len(parts) >= 5 {
-			s.Path = strings.Join(parts[4:], "/")
-		}
+		g.seg = parts[3:]
 	}
-	return s, true, nil
+	return g, true, nil
+}
+
+// source builds a Source from a resolved ref and the segments after it (the file
+// path for a blob, the directory for a tree). For a tree URL the directory is a
+// prefix composed with path (the add-time --path, "" elsewhere); blob and bare
+// repo URLs carry their own path, so path is ignored for them. ref is already
+// normalized ("" for the default branch).
+func (g githubURL) source(ref string, rest []string, path string) Source {
+	p := strings.Join(rest, "/")
+	if g.kind == "tree" {
+		return Source{Repo: g.repo, Ref: ref, Path: joinPathPrefix(p, path)}
+	}
+	return Source{Repo: g.repo, Ref: ref, Path: p}
+}
+
+// offline resolves the URL without touching the network, treating the first
+// segment as the ref. It's exact for a bare repo, a "-" default-branch URL, and a
+// single-segment ref; for a slashed ref it's a best-effort guess (see ambiguous).
+func (g githubURL) offline(path string) Source {
+	if g.kind == "" || len(g.seg) == 0 {
+		return g.source("", nil, path)
+	}
+	ref := g.seg[0]
+	if ref == "-" { // "-" => default branch
+		ref = ""
+	}
+	return g.source(ref, g.seg[1:], path)
+}
+
+// ambiguous reports whether the ref/path split needs the network: a multi-segment
+// URL whose leading segment isn't the "-" default-branch marker could have a
+// slashed ref. A blob's file is its last segment (so >=3 segments are needed for a
+// slashed ref to be possible); a tree's directory can be empty (so >=2 suffice).
+func (g githubURL) ambiguous() bool {
+	if g.kind == "" || len(g.seg) == 0 || g.seg[0] == "-" {
+		return false
+	}
+	if g.kind == "tree" {
+		return len(g.seg) >= 2
+	}
+	return len(g.seg) >= 3
 }
 
 // ParseLine parses a full config line: a spec plus an optional trailing token.
@@ -247,4 +298,22 @@ func (s Source) effectivePath() string {
 		return DefaultPath
 	}
 	return s.Path
+}
+
+// joinPathPrefix composes a directory prefix (from a tree URL) with a path glob.
+// A leading/trailing slash on the directory and a leading slash on the path are
+// ignored. An empty path defaults to DefaultPath, so a bare tree directory scopes
+// the default glob to that directory (e.g. dir "instructions" -> the source
+// "instructions/**/*.instructions.md"); a non-empty path narrows within it (dir
+// "instructions" + path "style/*.md" -> "instructions/style/*.md").
+func joinPathPrefix(dir, path string) string {
+	dir = strings.Trim(dir, "/")
+	path = strings.TrimPrefix(strings.TrimSpace(path), "/")
+	if path == "" {
+		path = DefaultPath
+	}
+	if dir == "" {
+		return path
+	}
+	return dir + "/" + path
 }
