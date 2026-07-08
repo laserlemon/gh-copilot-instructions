@@ -29,6 +29,59 @@ func isGlob(p string) bool {
 	return strings.ContainsAny(p, "*?[{")
 }
 
+// literalTreePrefix returns the deepest directory that every match pattern is
+// rooted in: the longest run of leading path segments, common to all patterns,
+// that contain no glob metacharacter and are not a pattern's final (file)
+// segment. Fetch uses it to scope its tree listing to that subdirectory instead
+// of walking the whole repository. It returns "" when the patterns share no
+// literal directory root (a top-level file, or a "**/..."-style glob).
+func literalTreePrefix(patterns []string) string {
+	var common []string
+	for i, p := range patterns {
+		segs := literalDirSegments(p)
+		if i == 0 {
+			common = segs
+			continue
+		}
+		common = commonSegments(common, segs)
+		if len(common) == 0 {
+			break
+		}
+	}
+	return strings.Join(common, "/")
+}
+
+// literalDirSegments returns a pattern's leading directory segments: those before
+// the first segment that is globby or final. A pattern's final segment is the
+// file (or file glob) and is never treated as a directory.
+func literalDirSegments(pattern string) []string {
+	segs := strings.Split(strings.Trim(pattern, "/"), "/")
+	var dirs []string
+	for i, seg := range segs {
+		if i == len(segs)-1 || isGlob(seg) {
+			break
+		}
+		dirs = append(dirs, seg)
+	}
+	return dirs
+}
+
+// commonSegments returns the shared leading segments of a and b.
+func commonSegments(a, b []string) []string {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	var out []string
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			break
+		}
+		out = append(out, a[i])
+	}
+	return out
+}
+
 // matches reports whether a repo-relative file path is selected by the source.
 func (s Source) matches(rel string) bool {
 	rel = strings.TrimPrefix(rel, "/")
