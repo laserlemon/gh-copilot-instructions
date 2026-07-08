@@ -9,16 +9,12 @@ import (
 // name contains slashes, it probes candidate refs against the API (longest-first)
 // and keeps the one that exists - mirroring how github.com itself disambiguates -
 // so a plain spec, a bare repo URL, or a "-" default-branch URL needs no network.
-func (a *App) ResolveSpec(spec string) (Source, error) {
-	return a.ResolveSpecWithPath(spec, "")
-}
-
-// ResolveSpecWithPath is ResolveSpec with an explicit path to compose onto a tree
-// URL's directory: the tree URL contributes a directory prefix and path (the
-// --path flag) narrows within it, defaulting to the whole-directory glob when
-// empty. path is ignored for blob and bare-repo URLs and for plain specs, which
-// already carry their own path.
-func (a *App) ResolveSpecWithPath(spec, path string) (Source, error) {
+//
+// path is composed onto a tree URL's directory: the tree URL contributes a
+// directory prefix and path (the --path flag) narrows within it, defaulting to
+// the whole-directory glob when empty. path is ignored for blob and bare-repo
+// URLs and for plain specs, which already carry their own path.
+func (a *App) ResolveSpec(spec, path string) (Source, error) {
 	g, ok, err := parseGitHubURL(spec)
 	if !ok {
 		return ParseSpec(spec) // not a github web URL

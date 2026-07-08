@@ -437,7 +437,7 @@ func heredoc(s string) string {
 // from the flags. (Gist support will slot in here as another recognized form.)
 func buildSource(arg, ref, path, token string) (gci.Source, error) {
 	if gci.IsGitHubURL(arg) {
-		s, err := newApp().ResolveSpecWithPath(arg, path)
+		s, err := newApp().ResolveSpec(arg, path)
 		if err != nil {
 			return s, err
 		}

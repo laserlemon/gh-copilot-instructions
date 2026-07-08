@@ -25,7 +25,7 @@ func (f *refFetcher) Fetch(Source, func(string, int)) (string, []FetchedFile, er
 func TestResolveSpecSlashedRef(t *testing.T) {
 	f := &refFetcher{exists: map[string]bool{"foo": true}}
 	a := &App{F: f}
-	s, err := a.ResolveSpec("https://github.com/o/r/blob/foo/bar/baz")
+	s, err := a.ResolveSpec("https://github.com/o/r/blob/foo/bar/baz", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestResolveSpecSlashedRef(t *testing.T) {
 func TestResolveSpecTreeSlashedRef(t *testing.T) {
 	f := &refFetcher{exists: map[string]bool{"foo": true}}
 	a := &App{F: f}
-	s, err := a.ResolveSpec("https://github.com/o/r/tree/foo/bar")
+	s, err := a.ResolveSpec("https://github.com/o/r/tree/foo/bar", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestResolveSpecTreeSlashedRef(t *testing.T) {
 func TestResolveSpecTreeRefSpansAllSegments(t *testing.T) {
 	f := &refFetcher{exists: map[string]bool{"foo/bar": true}}
 	a := &App{F: f}
-	s, err := a.ResolveSpec("https://github.com/o/r/tree/foo/bar")
+	s, err := a.ResolveSpec("https://github.com/o/r/tree/foo/bar", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestResolveSpecTreeRefSpansAllSegments(t *testing.T) {
 func TestResolveSpecWithPathTree(t *testing.T) {
 	f := &refFetcher{}
 	a := &App{F: f}
-	s, err := a.ResolveSpecWithPath("https://github.com/o/r/tree/-/instructions", "topics/*.md")
+	s, err := a.ResolveSpec("https://github.com/o/r/tree/-/instructions", "topics/*.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestResolveSpecWithPathTree(t *testing.T) {
 func TestResolveSpecWithPathIgnoredForBlob(t *testing.T) {
 	f := &refFetcher{}
 	a := &App{F: f}
-	s, err := a.ResolveSpecWithPath("https://github.com/o/r/blob/main/x.md", "ignored/*.md")
+	s, err := a.ResolveSpec("https://github.com/o/r/blob/main/x.md", "ignored/*.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestResolveSpecOfflineCases(t *testing.T) {
 		"https://github.com/o/r/tree/-/instructions",
 		"https://github.com/o/r/tree/main",
 	} {
-		if _, err := a.ResolveSpec(spec); err != nil {
+		if _, err := a.ResolveSpec(spec, ""); err != nil {
 			t.Errorf("ResolveSpec(%q): %v", spec, err)
 		}
 	}
