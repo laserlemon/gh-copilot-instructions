@@ -126,8 +126,24 @@ func (Fetcher) Fetch(s Source, onProgress func(sha string, files int)) (string, 
 	if onProgress != nil {
 		onProgress(ci.SHA, 0) // SHA is known now, before any blob downloads
 	}
+	// Scope the (recursive) tree listing to the directory the glob is rooted in,
+	// so a narrow path into a huge monorepo doesn't fetch - and truncate on - the
+	// whole repository. base is the repo-relative prefix of the scoped subtree
+	// ("" when listing from the root); tree entries are relative to it.
+	treeSHA := ci.Commit.Tree.SHA
+	base := ""
+	if prefix := literalTreePrefix(s.matchPatterns()); prefix != "" {
+		sub, err := descendTree(client, s.Repo, treeSHA, prefix)
+		if err != nil {
+			return "", nil, err
+		}
+		if sub == "" {
+			return ci.SHA, nil, nil // the prefix directory doesn't exist: no matches
+		}
+		treeSHA, base = sub, prefix+"/"
+	}
 	var tree treeResponse
-	if err := client.Get(fmt.Sprintf("repos/%s/git/trees/%s?recursive=1", s.Repo, ci.Commit.Tree.SHA), &tree); err != nil {
+	if err := client.Get(fmt.Sprintf("repos/%s/git/trees/%s?recursive=1", s.Repo, treeSHA), &tree); err != nil {
 		return "", nil, err
 	}
 	if tree.Truncated {
@@ -135,23 +151,51 @@ func (Fetcher) Fetch(s Source, onProgress func(sha string, files int)) (string, 
 	}
 	var files []FetchedFile
 	for _, e := range tree.Tree {
-		if e.Type != "blob" || !s.matches(e.Path) {
+		rel := base + e.Path
+		if e.Type != "blob" || !s.matches(rel) {
 			continue
 		}
 		var blob blobResponse
 		if err := client.Get(fmt.Sprintf("repos/%s/git/blobs/%s", s.Repo, e.SHA), &blob); err != nil {
-			return "", nil, fmt.Errorf("%s: %s: %w", s.Repo, e.Path, err)
+			return "", nil, fmt.Errorf("%s: %s: %w", s.Repo, rel, err)
 		}
 		content, err := decodeBlob(blob)
 		if err != nil {
-			return "", nil, fmt.Errorf("%s: %s: %w", s.Repo, e.Path, err)
+			return "", nil, fmt.Errorf("%s: %s: %w", s.Repo, rel, err)
 		}
-		files = append(files, FetchedFile{Rel: e.Path, Content: content})
+		files = append(files, FetchedFile{Rel: rel, Content: content})
 		if onProgress != nil {
 			onProgress(ci.SHA, len(files))
 		}
 	}
 	return ci.SHA, files, nil
+}
+
+// descendTree walks dir segment by segment from a root tree SHA, using a
+// non-recursive tree listing at each level (each is one directory's direct
+// children, so it never truncates), and returns the tree SHA of the directory
+// dir names. It returns "" (no error) when a segment is missing or isn't a
+// directory, so the caller can treat the scoped path as matching no files.
+func descendTree(client *api.RESTClient, repo, rootSHA, dir string) (string, error) {
+	sha := rootSHA
+	for _, seg := range strings.Split(dir, "/") {
+		var tree treeResponse
+		if err := client.Get(fmt.Sprintf("repos/%s/git/trees/%s", repo, sha), &tree); err != nil {
+			return "", err
+		}
+		next := ""
+		for _, e := range tree.Tree {
+			if e.Path == seg && e.Type == "tree" {
+				next = e.SHA
+				break
+			}
+		}
+		if next == "" {
+			return "", nil
+		}
+		sha = next
+	}
+	return sha, nil
 }
 
 func decodeBlob(b blobResponse) ([]byte, error) {
