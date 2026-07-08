@@ -19,6 +19,54 @@ var topLevelShortcuts = []struct{ Alias, Equiv string }{
 	{"files", "file list"},
 }
 
+// argDoc documents one positional argument for the help's ARGUMENTS section.
+// Forms, when set, render as an indented bullet list under Desc (used to spell
+// out the accepted shapes of a <source> without cramming them into prose).
+type argDoc struct {
+	Name  string
+	Desc  string
+	Forms []string
+}
+
+// sourceArg and slugArg are the positional arguments the source commands accept;
+// argSets composes them per command. A command opts in by setting its "argSet"
+// annotation to one of these keys (see argDocsFor).
+var (
+	sourceArg = argDoc{
+		Name: "<source>",
+		Desc: "A repository or gist to install instructions from. One of:",
+		Forms: []string{
+			"<owner/repo> - a repository (its default branch)",
+			"gist/<id> - a gist",
+			"a github.com repository, tree (directory), or blob (file) URL",
+			"a gist.github.com URL",
+		},
+	}
+	slugArg = argDoc{
+		Name: "<slug>",
+		Desc: "A source's slug from `source list`.",
+	}
+
+	argSets = map[string][]argDoc{
+		"source":     {sourceArg},
+		"sourceSlug": {sourceArg, slugArg},
+	}
+)
+
+// argSetKey is the command annotation naming which argSets entry to render in
+// the ARGUMENTS section.
+const argSetKey = "argSet"
+
+// argDocsFor returns the ARGUMENTS entries for a command, from its argSet
+// annotation. Alias commands proxy their help to a canonical target (see
+// helpProxyTarget), so only the canonical commands need the annotation.
+func argDocsFor(c *cobra.Command) []argDoc {
+	if c == nil || c.Annotations == nil {
+		return nil
+	}
+	return argSets[c.Annotations[argSetKey]]
+}
+
 // applyGHStyle makes the command tree render help the way built-in gh commands
 // do: uppercase section headers (USAGE, COMMANDS, FLAGS, EXAMPLES, LEARN MORE),
 // a "gh "-prefixed usage line, and a "-h, --help" flag described as "Show help
@@ -106,6 +154,23 @@ func ghUsageBody(w io.Writer, c *cobra.Command, cs *gci.ColorScheme) {
 	// help targets are not parsed, so their flags would otherwise be unmerged).
 	_ = c.InheritedFlags()
 	fmt.Fprintf(w, "%s\n  gh %s\n", cs.Bold("USAGE"), c.UseLine())
+
+	if set := argDocsFor(c); len(set) > 0 {
+		fmt.Fprintf(w, "\n%s\n", cs.Bold("ARGUMENTS"))
+		pad := 0
+		for _, a := range set {
+			if len(a.Name) > pad {
+				pad = len(a.Name)
+			}
+		}
+		for _, a := range set {
+			fmt.Fprintf(w, "  %-*s  %s\n", pad, a.Name, a.Desc)
+			for _, f := range a.Forms {
+				// Continuation lines align under the description column.
+				fmt.Fprintf(w, "  %-*s  • %s\n", pad, "", f)
+			}
+		}
+	}
 
 	if len(c.Aliases) > 0 {
 		fmt.Fprintf(w, "\n%s\n  %s\n", cs.Bold("ALIASES"), c.NameAndAliases())
