@@ -507,9 +507,9 @@ func (a *App) renderDoctor(results []checkResult) {
 			plur(fail, "check is failing", "checks are failing"),
 			plur(warn, "warning", "warnings"))
 	case warn > 0:
-		a.msg("%s %s (%d ok).", cs.Yellow("!"), plur(warn, "warning", "warnings"), ok)
+		a.msg("%s %s (%d OK).", cs.Yellow("!"), plur(warn, "warning", "warnings"), ok)
 	default:
-		a.success("Everything looks healthy.")
+		a.success("Everything looks healthy!")
 	}
 }
 

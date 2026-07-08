@@ -841,7 +841,11 @@ func (a *App) RemoveAll(asJSON bool) error {
 	if err := a.Paths.ClearSources(); err != nil {
 		return err
 	}
-	if err := a.Paths.Save(&State{Sources: map[string]SourceState{}}); err != nil {
+	// Clear only the sources; preserve the rest of the state (notably AutoPull)
+	// - removing sources must not disturb the auto-pull schedule, which lives in
+	// the same state file.
+	st.Sources = map[string]SourceState{}
+	if err := a.Paths.Save(st); err != nil {
 		return err
 	}
 	if asJSON {

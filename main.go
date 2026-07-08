@@ -198,16 +198,17 @@ func newApp() *gci.App {
 func addCmd() *cobra.Command {
 	var ref, path, token string
 	c := &cobra.Command{
-		Use:   "add [<owner/repo> | <blob-url> | <tree-url>]",
+		Use:   "add <source>",
 		Short: "Add a source and pull it",
-		Long: "Add a source, then pull. Give the source as owner/repo or a GitHub blob or\n" +
-			"tree URL. With owner/repo, --ref and --path select a ref and a path within the\n" +
-			"repository; a blob URL already carries its ref and path, so those flags are\n" +
-			"ignored; a tree URL carries a ref and a directory, and --path narrows within\n" +
-			"that directory. Quote a glob path.\n\n" +
-			"Your gh auth is used by default. If gh cannot access a repository, you may\n" +
-			"provide a personal access token (with permission to read repository contents)\n" +
-			"using --token.",
+		Long: "Add a source, then pull.\n\n" +
+			"--ref and --path select a ref/version and a path within the source (for a gist,\n" +
+			"--path is a filename glob). A blob URL already carries its ref and path, so those\n" +
+			"flags are ignored; a tree URL carries a ref and a directory that --path narrows\n" +
+			"within. Quote a glob path.\n\n" +
+			"Your gh auth is used by default. If gh cannot access a private repository or\n" +
+			"gist, provide a personal access token (with permission to read repository\n" +
+			"contents, or gist scope) using --token.",
+		Annotations: map[string]string{argSetKey: "source"},
 		Example: heredoc(`
 			# Add a source by owner/repo (default branch, default path: **/*.instructions.md)
 			$ gh copilot-instructions source add acme/team-instructions
@@ -215,18 +216,15 @@ func addCmd() *cobra.Command {
 			# Pin a ref and select a path within the repository
 			$ gh copilot-instructions source add acme/team-instructions --ref main --path 'instructions/*.md'
 
-			# Add a specific GitHub blob source
+			# Add from a GitHub blob or tree (directory) URL
 			$ gh copilot-instructions source add https://github.com/acme/team-instructions/blob/main/style.instructions.md
+			$ gh copilot-instructions source add https://github.com/acme/team-instructions/tree/main/instructions
 
-			# Add a GitHub tree (directory) source; --path narrows within the directory
-			$ gh copilot-instructions source add https://github.com/acme/team-instructions/tree/main/instructions`),
-		Args: cobra.MaximumNArgs(1),
+			# Add a gist (by id or gist URL)
+			$ gh copilot-instructions source add gist/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4`),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			arg := ""
-			if len(args) == 1 {
-				arg = args[0]
-			}
-			s, err := buildSource(arg, ref, path, token)
+			s, err := buildSource(args[0], ref, path, token)
 			if err != nil {
 				return err
 			}
@@ -241,15 +239,16 @@ func addCmd() *cobra.Command {
 
 func pullCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "pull [<slug> | <owner/repo>]",
+		Use:   "pull [<source> | <slug>]",
 		Short: "Pull one or all sources",
-		Long: "Pull all configured sources, or just the one matching the given slug or\n" +
-			"owner/repo.",
+		Long: "Pull all configured sources, or just the one matching the given source or\n" +
+			"slug.",
+		Annotations: map[string]string{argSetKey: "sourceSlug"},
 		Example: heredoc(`
 			# Pull every configured source
 			$ gh copilot-instructions source pull
 
-			# Pull just one source by slug or owner/repo
+			# Pull just one source (by source or slug)
 			$ gh copilot-instructions source pull acme/team-instructions
 
 			# List the repos whose commit changed on this pull
@@ -289,13 +288,13 @@ func removeCmd() *cobra.Command {
 	var ref, path string
 	var all bool
 	c := &cobra.Command{
-		Use:   "remove [<owner/repo> | <blob-url> | <tree-url> | <slug>]",
+		Use:   "remove [<source> | <slug>]",
 		Short: "Remove one source and its files, or --all",
 		Long: "Remove one configured source and prune the files it installed, or use --all to\n" +
 			"remove every source, all installed files, and the local config.\n\n" +
-			"Identify the source the way you added it: owner/repo (optionally with\n" +
-			"--ref/--path), a GitHub blob or tree URL, or its slug (the SLUG column of the\n" +
-			"list output). If you added a tree URL together with --path, remove it by slug.",
+			"Identify the source the way you added it (optionally with --ref/--path), or by\n" +
+			"its slug. If you added a tree URL together with --path, remove it by slug.",
+		Annotations: map[string]string{argSetKey: "sourceSlug"},
 		Example: heredoc(`
 			# Remove a source by owner/repo
 			$ gh copilot-instructions source remove acme/team-instructions
@@ -322,9 +321,10 @@ func removeCmd() *cobra.Command {
 				return app.RemoveAll(jsonOut)
 			}
 			if arg == "" {
-				return fmt.Errorf("specify owner/repo, a GitHub blob URL, or a slug to remove, or use --all")
+				return fmt.Errorf("specify a source or slug to remove, or use --all")
 			}
-			// owner/repo and blob URLs contain a slash; a slug never does.
+			// A source (owner/repo, a gist/<id>, or any URL) contains a slash; a
+			// slug never does.
 			if strings.Contains(arg, "/") {
 				s, err := buildRemoveTarget(arg, ref, path)
 				if err != nil {
@@ -430,12 +430,24 @@ func heredoc(s string) string {
 }
 
 // buildSource builds a source for `add` from a positional argument plus flags.
-// The argument is either a GitHub blob URL - which carries its own ref and path,
-// so --ref/--path are ignored and ResolveSpec disambiguates a slashed branch
-// name against the API - a GitHub tree URL - which carries a ref and a directory
-// that --path narrows within - or a bare owner/repo, whose ref and path come
-// from the flags. (Gist support will slot in here as another recognized form.)
+// The argument is one of: a gist.github.com URL (parsed by ParseGist); a GitHub
+// blob URL - which carries its own ref and path, so --ref/--path are ignored and
+// ResolveSpec disambiguates a slashed branch name against the API; a GitHub tree
+// URL - which carries a ref and a directory that --path narrows within; or a bare
+// owner/repo or gist/<id>, whose ref/version and path come from the flags (both
+// are owner/repo-shaped, so ParseRepo handles them and IsGist routes the gist).
 func buildSource(arg, ref, path, token string) (gci.Source, error) {
+	if gci.IsGistURL(arg) {
+		s, err := gci.ParseGist(arg)
+		if err != nil {
+			return s, err
+		}
+		applyRefPath(&s, ref, path)
+		if token != "" {
+			s.Token = token
+		}
+		return s, nil
+	}
 	if gci.IsGitHubURL(arg) {
 		s, err := newApp().ResolveSpec(arg, path)
 		if err != nil {
@@ -458,11 +470,19 @@ func buildSource(arg, ref, path, token string) (gci.Source, error) {
 }
 
 // buildRemoveTarget builds the source to remove from a positional argument plus
-// flags. Like buildSource it accepts a blob URL or a bare owner/repo, but it
-// resolves offline (ParseSpec), because remove only needs to identify an
-// already-configured source and must never require the network; the slug is the
-// escape hatch for the rare slashed-ref blob URL.
+// flags. Like buildSource it accepts a gist URL, a blob URL, or a bare
+// owner/repo or gist/<id>, but it resolves offline (no network), because remove
+// only needs to identify an already-configured source; the slug is the escape
+// hatch for the rare slashed-ref blob URL.
 func buildRemoveTarget(arg, ref, path string) (gci.Source, error) {
+	if gci.IsGistURL(arg) {
+		s, err := gci.ParseGist(arg)
+		if err != nil {
+			return s, err
+		}
+		applyRefPath(&s, ref, path)
+		return s, nil
+	}
 	if gci.IsGitHubURL(arg) {
 		return gci.ParseSpec(arg) // ref/path flags ignored for a URL
 	}

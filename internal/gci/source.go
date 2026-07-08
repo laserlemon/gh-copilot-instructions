@@ -33,11 +33,95 @@ const FileDir = "gh-copilot-instructions"
 // IsGitHubURL reports whether arg looks like a github.com web URL (with or
 // without an http(s) scheme), as opposed to a bare owner/repo argument. The
 // source commands use it to decide how to parse a positional argument: a URL
-// carries its own ref and path, while owner/repo takes them from flags.
+// carries its own ref and path, while owner/repo takes them from flags. A
+// gist.github.com URL is handled separately (see IsGistURL); it is fetched via
+// the Gists API, not the repo contents API.
 func IsGitHubURL(arg string) bool {
 	u := strings.TrimSpace(arg)
 	u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
 	return strings.HasPrefix(u, "github.com/")
+}
+
+// gistPrefix marks a Source's Repo as a gist ("gist/<id>") rather than an
+// owner/repo. github.com/gist is a reserved namespace, so "gist/<id>" can never
+// be a real repo - which is what makes this prefix safe. It also keeps the slash
+// that lets targetMatches tell a spec from a slug and lets the canonical config
+// line round-trip through ParseSpec (an owner/repo-shaped spec).
+const gistPrefix = "gist/"
+
+// gistRepo builds the Repo field for a gist id.
+func gistRepo(id string) string { return gistPrefix + id }
+
+// IsGist reports whether the source is a gist (fetched via the Gists API rather
+// than the repo contents API).
+func (s Source) IsGist() bool { return strings.HasPrefix(s.Repo, gistPrefix) }
+
+// GistID returns the gist id for a gist source (the part after "gist/").
+func (s Source) GistID() string { return strings.TrimPrefix(s.Repo, gistPrefix) }
+
+// validGistID reports whether id is a plausible gist id: non-empty and made up
+// entirely of alphanumeric characters (gist ids are hex, but stay lenient for
+// GitHub Enterprise variants).
+func validGistID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, c := range id {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// IsGistURL reports whether arg is a gist.github.com web URL. The bare gist/<id>
+// form needs no special detection - it is owner/repo-shaped, so it flows through
+// ParseRepo/ParseSpec and IsGist routes it - but a gist URL is not, so the source
+// commands use this to route it to ParseGist.
+func IsGistURL(arg string) bool {
+	u := strings.TrimSpace(arg)
+	u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+	return strings.HasPrefix(u, "gist.github.com/")
+}
+
+// ParseGist parses a gist.github.com web URL into a gist Source (scheme
+// optional):
+//
+//	gist.github.com/<id>
+//	gist.github.com/<user>/<id>[/<revision>]
+//
+// The result is a gist Source (Repo "gist/<id>"). A 40-hex <revision> segment
+// becomes the Ref (a pinned version); otherwise Ref is empty (the latest
+// version). A ref or filename glob within the gist is given with --ref/--path,
+// so ParseGist itself never sets Path. The bare gist/<id> form is parsed by
+// ParseRepo/ParseSpec, not here.
+func ParseGist(arg string) (Source, error) {
+	u := strings.TrimSpace(arg)
+	u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+	if !strings.HasPrefix(u, "gist.github.com/") {
+		return Source{}, fmt.Errorf("not a gist URL: %q", arg)
+	}
+	u = strings.TrimPrefix(u, "gist.github.com/")
+	if i := strings.IndexAny(u, "?#"); i >= 0 { // drop query / #fragment
+		u = u[:i]
+	}
+	parts := strings.Split(strings.Trim(u, "/"), "/")
+	var id, ref string
+	if len(parts) == 1 {
+		id = parts[0] // gist.github.com/<id>
+	} else {
+		id = parts[1] // gist.github.com/<user>/<id>
+		if len(parts) >= 3 && isFullSHA(parts[2]) {
+			ref = parts[2] // gist.github.com/<user>/<id>/<revision>
+		}
+	}
+	id = strings.TrimSuffix(id, ".git")
+	if !validGistID(id) {
+		return Source{}, fmt.Errorf("invalid gist URL: %q", arg)
+	}
+	return Source{Repo: gistRepo(id), Ref: ref}, nil
 }
 
 // ParseRepo parses a bare "owner/repo" argument - the CLI input form for the

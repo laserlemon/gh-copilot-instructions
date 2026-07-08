@@ -89,8 +89,12 @@ type blobResponse struct {
 type Fetcher struct{}
 
 // ResolveSHA returns just the commit SHA for a source (cheap skip check: a
-// single API call, and none at all when the ref is an immutable commit SHA).
+// single API call, and none at all when the ref is an immutable commit SHA). A
+// gist source resolves via the Gists API instead (see gistResolveSHA).
 func (Fetcher) ResolveSHA(s Source) (string, error) {
+	if s.IsGist() {
+		return gistResolveSHA(s)
+	}
 	ref := s.Ref
 	if ref == "" {
 		ref = defaultRef()
@@ -115,6 +119,9 @@ func (Fetcher) ResolveSHA(s Source) (string, error) {
 // with the running count after each blob, so callers can fill in the SHA early
 // and animate a live progress counter during the download.
 func (Fetcher) Fetch(s Source, onProgress func(sha string, files int)) (string, []FetchedFile, error) {
+	if s.IsGist() {
+		return gistFetch(s, onProgress)
+	}
 	client, err := newClient(resolveToken(s))
 	if err != nil {
 		return "", nil, err
