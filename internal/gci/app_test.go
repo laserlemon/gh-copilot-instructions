@@ -238,6 +238,63 @@ func TestRemoveOneByRepo(t *testing.T) {
 	}
 }
 
+// TestGistSourceInstallsAndRemoves runs a gist source through pull and remove
+// with the fake fetcher: it installs its flat files under the gist slug (proving
+// DestPath/slug work for gists), and remove by the gist form prunes them.
+func TestGistSourceInstallsAndRemoves(t *testing.T) {
+	gist, err := ParseSpec("gist/aa5a315d61ae9438b18d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gist.IsGist() {
+		t.Fatalf("gist/<id> did not parse as a gist: %+v", gist)
+	}
+	repo, _ := ParseSpec("o/r")
+	a := newTestApp(t, &fakeFetcher{
+		sha: map[string]string{gist.ID(): "gistsha", repo.ID(): "reposha"},
+		files: map[string][]FetchedFile{
+			gist.ID(): {{Rel: "style.instructions.md", Content: []byte("gist")}},
+			repo.ID(): {{Rel: "r.instructions.md", Content: []byte("repo")}},
+		},
+	})
+	if err := a.Paths.AddSource(gist); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Paths.AddSource(repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	// The gist installs under its own slug namespace.
+	want := gist.DestPath("style.instructions.md")
+	found := false
+	for _, n := range ls(t, instDir(a)) {
+		if filepath.ToSlash(n) == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("gist file not installed at %q; have %v", want, ls(t, instDir(a)))
+	}
+	st, _ := a.Paths.LoadState()
+	if ss, ok := st.Sources[gist.ID()]; !ok || ss.SHA != "gistsha" {
+		t.Fatalf("gist state missing or wrong SHA: %+v", ss)
+	}
+	// Remove by the gist spec (what the CLI passes for a gist form) prunes only
+	// the gist's files.
+	if err := a.Remove(gist.Spec(), false); err != nil {
+		t.Fatal(err)
+	}
+	st2, _ := a.Paths.LoadState()
+	if _, ok := st2.Sources[gist.ID()]; ok {
+		t.Fatal("gist state remained after remove")
+	}
+	if _, ok := st2.Sources[repo.ID()]; !ok {
+		t.Fatal("repo state should remain after removing only the gist")
+	}
+}
+
 func TestEnvOverridesFile(t *testing.T) {
 	a := newTestApp(t, &fakeFetcher{})
 	fileSrc, _ := ParseSpec("o/fromfile")
