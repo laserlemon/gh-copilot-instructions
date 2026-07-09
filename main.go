@@ -70,6 +70,7 @@ func rootCmd() *cobra.Command {
 	// which documents them in the root help.
 	root.AddCommand(
 		alias("add", "source add", addCmd()),
+		alias("remove", "source remove", removeCmd()),
 		alias("pull", "source pull", pullCmd()),
 		alias("sources", "source list", listCmd()),
 		alias("files", "file list", fileListCmd()),

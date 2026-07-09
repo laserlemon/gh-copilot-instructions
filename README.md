@@ -40,9 +40,10 @@ gh copilot-instructions doctor [--json]                                     # ru
 
 The source-management commands live under `source` (`source list`, `source add`, `source pull`,
 `source remove`) and the installed files under `file` (`file list`). For convenience several bare
-names work as top-level aliases: `add` → `source add`, `pull` → `source pull`, `sources` →
-`source list`, and `files` → `file list`. Running `gh copilot-instructions` with no command lists
-your sources once any are configured, and shows help on a fresh install.
+names work as top-level aliases: `add` → `source add`, `remove` → `source remove`, `pull` →
+`source pull`, `sources` → `source list`, and `files` → `file list`. Running
+`gh copilot-instructions` with no command lists your sources once any are configured, and shows
+help on a fresh install.
 
 Every command accepts `--json` for machine-readable output. On a terminal the JSON is pretty-printed
 and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly into `jq`.

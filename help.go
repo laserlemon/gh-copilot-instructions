@@ -14,6 +14,7 @@ import (
 // registered in rootCmd.
 var topLevelShortcuts = []struct{ Alias, Equiv string }{
 	{"add", "source add"},
+	{"remove", "source remove"},
 	{"pull", "source pull"},
 	{"sources", "source list"},
 	{"files", "file list"},
