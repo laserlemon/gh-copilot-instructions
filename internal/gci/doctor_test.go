@@ -34,8 +34,8 @@ func (testSched) Kind() string             { return "test" }
 type unreachableFetcher struct{}
 
 func (unreachableFetcher) ResolveSHA(Source) (string, error) { return "", errors.New("not found") }
-func (unreachableFetcher) Fetch(Source, func(string, int)) (string, []FetchedFile, error) {
-	return "", nil, errors.New("not found")
+func (unreachableFetcher) Fetch(Source, func(string, int)) (string, string, []FetchedFile, error) {
+	return "", "", nil, errors.New("not found")
 }
 
 // newDoctorApp builds a sandboxed App with a known token and stubbed probe and

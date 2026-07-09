@@ -42,12 +42,13 @@ func IsGitHubURL(arg string) bool {
 	return strings.HasPrefix(u, "github.com/")
 }
 
-// gistPrefix marks a Source's Repo as a gist ("gist/<id>") rather than an
-// owner/repo. github.com/gist is a reserved namespace, so "gist/<id>" can never
-// be a real repo - which is what makes this prefix safe. It also keeps the slash
-// that lets targetMatches tell a spec from a slug and lets the canonical config
-// line round-trip through ParseSpec (an owner/repo-shaped spec).
-const gistPrefix = "gist/"
+// gistPrefix marks a Source's Repo as a gist ("gist:<id>") rather than an
+// owner/repo. The "gist:" scheme is never owner/repo-shaped (it has no owner
+// slash), so it can never collide with a real repository, and ParseSpec
+// special-cases it so the canonical config line round-trips. The gist id alone is
+// the identity - it is globally unique and what the Gists API fetches by - so the
+// owner is never stored here; it is a display-only cache (see SourceState.Owner).
+const gistPrefix = "gist:"
 
 // gistRepo builds the Repo field for a gist id.
 func gistRepo(id string) string { return gistPrefix + id }
@@ -56,7 +57,7 @@ func gistRepo(id string) string { return gistPrefix + id }
 // than the repo contents API).
 func (s Source) IsGist() bool { return strings.HasPrefix(s.Repo, gistPrefix) }
 
-// GistID returns the gist id for a gist source (the part after "gist/").
+// GistID returns the gist id for a gist source (the part after "gist:").
 func (s Source) GistID() string { return strings.TrimPrefix(s.Repo, gistPrefix) }
 
 // validGistID reports whether id is a plausible gist id: non-empty and made up
@@ -76,10 +77,10 @@ func validGistID(id string) bool {
 	return true
 }
 
-// IsGistURL reports whether arg is a gist.github.com web URL. The bare gist/<id>
-// form needs no special detection - it is owner/repo-shaped, so it flows through
-// ParseRepo/ParseSpec and IsGist routes it - but a gist URL is not, so the source
-// commands use this to route it to ParseGist.
+// IsGistURL reports whether arg is a gist.github.com web URL. The bare gist:<id>
+// shorthand is not a URL, so the source commands detect it with IsGistSpec and
+// parse it with ParseGistArg (CLI) or ParseSpec (config line); a gist URL is
+// routed here to ParseGist.
 func IsGistURL(arg string) bool {
 	u := strings.TrimSpace(arg)
 	u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
@@ -92,11 +93,11 @@ func IsGistURL(arg string) bool {
 //	gist.github.com/<id>
 //	gist.github.com/<user>/<id>[/<revision>]
 //
-// The result is a gist Source (Repo "gist/<id>"). A 40-hex <revision> segment
+// The result is a gist Source (Repo "gist:<id>"). A 40-hex <revision> segment
 // becomes the Ref (a pinned version); otherwise Ref is empty (the latest
 // version). A ref or filename glob within the gist is given with --ref/--path,
-// so ParseGist itself never sets Path. The bare gist/<id> form is parsed by
-// ParseRepo/ParseSpec, not here.
+// so ParseGist itself never sets Path. The bare gist:<id> shorthand is parsed by
+// ParseGistArg/ParseSpec, not here.
 func ParseGist(arg string) (Source, error) {
 	u := strings.TrimSpace(arg)
 	u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
@@ -124,6 +125,53 @@ func ParseGist(arg string) (Source, error) {
 	return Source{Repo: gistRepo(id), Ref: ref}, nil
 }
 
+// IsGistSpec reports whether arg is the bare "gist:<id>" shorthand (the CLI and
+// config-file input form for a gist), as opposed to an owner/repo, a slug, or a
+// URL. The source commands use it to route the argument to ParseGistArg.
+func IsGistSpec(arg string) bool {
+	return strings.HasPrefix(strings.TrimSpace(arg), gistPrefix)
+}
+
+// ParseGistArg parses the "gist:<id>" CLI shorthand for the source commands. Like
+// ParseRepo it takes only the identity; a revision or file glob is given with the
+// --ref and --path flags, so an inline @ref or :path is rejected with a hint.
+func ParseGistArg(arg string) (Source, error) {
+	id := strings.TrimPrefix(strings.TrimSpace(arg), gistPrefix)
+	if strings.ContainsAny(id, "@: \t") {
+		return Source{}, fmt.Errorf("provide just gist:<id>; use --ref and --path for a version or file glob")
+	}
+	if !validGistID(id) {
+		return Source{}, fmt.Errorf("invalid gist id %q (expected gist:<id>)", id)
+	}
+	return Source{Repo: gistRepo(id)}, nil
+}
+
+// parseGistSpec parses the canonical gist spec "gist:<id>[@ref][:path]" - the form
+// stored in the config file and printed by Spec. It returns ok=false for a
+// non-gist spec, so ParseSpec falls through to owner/repo parsing. The "gist:"
+// scheme has no owner slash, so it is unambiguous against any owner/repo spec.
+func parseGistSpec(spec string) (Source, bool, error) {
+	if !strings.HasPrefix(spec, gistPrefix) {
+		return Source{}, false, nil
+	}
+	rest := strings.TrimPrefix(spec, gistPrefix)
+	var s Source
+	if i := strings.IndexByte(rest, ':'); i >= 0 { // :path (gists are flat, so a filename glob)
+		s.Path = strings.TrimPrefix(strings.TrimSpace(rest[i+1:]), "/")
+		rest = rest[:i]
+	}
+	if i := strings.IndexByte(rest, '@'); i >= 0 { // @ref (a pinned revision)
+		s.Ref = strings.TrimSpace(rest[i+1:])
+		rest = rest[:i]
+	}
+	id := strings.TrimSpace(rest)
+	if !validGistID(id) {
+		return Source{}, true, fmt.Errorf("invalid gist id %q (expected gist:<id>)", id)
+	}
+	s.Repo = gistRepo(id)
+	return s, true, nil
+}
+
 // ParseRepo parses a bare "owner/repo" argument - the CLI input form for the
 // source commands. It rejects the older combined forms (an @ref or :path suffix,
 // a GitHub blob URL); a ref or path within the repo is given with the --ref and
@@ -142,8 +190,10 @@ func ParseRepo(arg string) (Source, error) {
 	return Source{Repo: r}, nil
 }
 
-// ParseSpec parses an "owner/repo[@ref][:path]" source spec (no token). A GitHub
-// blob or tree URL (e.g. https://github.com/owner/repo/blob/main/path/file.md or
+// ParseSpec parses an "owner/repo[@ref][:path]" source spec (no token). The
+// canonical gist spec "gist:<id>[@ref][:path]" is also accepted (routed to
+// parseGistSpec). A GitHub blob or tree URL (e.g.
+// https://github.com/owner/repo/blob/main/path/file.md or
 // https://github.com/owner/repo/tree/main/dir) is also accepted and normalized to
 // the same Source; a tree URL's directory becomes a prefix over the default glob.
 func ParseSpec(spec string) (Source, error) {
@@ -157,6 +207,9 @@ func ParseSpec(spec string) (Source, error) {
 			return Source{}, err
 		}
 		return g.offline(""), nil
+	}
+	if g, ok, err := parseGistSpec(rest); ok {
+		return g, err
 	}
 	// :path  (first colon; owner/repo and refs never contain ':')
 	if i := strings.IndexByte(rest, ':'); i >= 0 {
@@ -316,16 +369,31 @@ func (s Source) Name() string {
 	return s.Repo
 }
 
+// Display returns the human-facing identifier for a source: "owner/repo" for a
+// repository, and "<owner>/gist:<id>" for a gist when the owner is known (GitHub's
+// own label for an untitled gist), falling back to the stored "gist:<id>" before
+// the first successful pull or for an anonymous gist. owner is a display-only
+// value (the pull cache in SourceState.Owner); it never feeds the slug, the
+// config line, or targetMatches.
+func (s Source) Display(owner string) string {
+	if s.IsGist() && owner != "" {
+		return owner + "/" + gistPrefix + s.GistID()
+	}
+	return s.Repo
+}
+
 // ID is the deterministic identity (slug) of a source: the first 8 base36 chars
 // of sha256("repo\nref\npath"). Stable across machines and re-pulls; unique per
 // distinct repo+ref+path; computable offline. Base36 (lowercase 0-9a-z) keeps
 // ids from looking like commit SHAs and stays stable on case-insensitive file
-// systems, while packing more entropy per character than hex.
+// systems, while packing more entropy per character than hex. For a gist, repo is
+// "gist:<id>" (owner-free), so the slug follows the gist across owner renames.
 //
-// Invariant: a slug never contains a slash. Base36 already guarantees this, and
-// any future custom slugs (see #8) must preserve it - it's what lets a command
-// tell a slug apart from a source spec (owner/repo[@ref][:path]) with no
-// ambiguity (see targetMatches).
+// Invariant: a slug never contains a slash and never begins with the "gist:"
+// scheme. Base36 already guarantees both, and any future custom slugs (see #8)
+// must preserve them - it's what lets a command tell a slug apart from a source
+// spec (owner/repo[@ref][:path] or gist:<id>[@ref][:path]) with no ambiguity (see
+// targetMatches).
 func (s Source) ID() string {
 	sum := sha256.Sum256([]byte(s.Repo + "\n" + s.Ref + "\n" + s.Path))
 	// A 256-bit value is at most 50 base36 digits; left-pad so the id always
@@ -340,11 +408,12 @@ func (s Source) ID() string {
 // targetMatches reports whether a configured source - identified by its slug id
 // and its repo/ref/path coordinates - is the one a remove target refers to.
 //
-// A slug never contains a slash and a source spec always does (owner/repo), so a
-// remove target is unambiguously one or the other. See Source.ID for the
-// no-slash slug invariant that custom slugs must also honor.
+// A slug never contains a slash or the "gist:" scheme, while a source spec is
+// either owner/repo-shaped (has a slash) or a gist:<id>, so a remove target is
+// unambiguously a slug or a spec. See Source.ID for the invariant custom slugs
+// must also honor.
 func targetMatches(target, id, repo, ref, path string) bool {
-	if strings.Contains(target, "/") {
+	if strings.Contains(target, "/") || strings.HasPrefix(target, gistPrefix) {
 		// A spec/URL: match by coordinates, not by recomputing a slug, so this
 		// stays correct once slugs can be custom (non-deterministic).
 		spec, err := ParseSpec(target)

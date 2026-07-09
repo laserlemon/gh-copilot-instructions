@@ -113,15 +113,23 @@ func (Fetcher) ResolveSHA(s Source) (string, error) {
 	return ci.SHA, nil
 }
 
-// Fetch resolves the source, lists its tree, and downloads the glob-matched
-// blobs. Returns the commit SHA and the matched files (content verbatim). When
-// onProgress is non-nil it is called first with the resolved SHA (files=0), then
-// with the running count after each blob, so callers can fill in the SHA early
-// and animate a live progress counter during the download.
-func (Fetcher) Fetch(s Source, onProgress func(sha string, files int)) (string, []FetchedFile, error) {
+// Fetch resolves the source and downloads its glob-matched files (content
+// verbatim), returning the version SHA, the owner login (gists only - "" for a
+// repository or an anonymous gist), and the files. A gist is fetched via the
+// Gists API (gistFetch); a repository via repoFetch. When onProgress is non-nil it
+// is called first with the resolved SHA (files=0), then with the running count
+// after each file, so callers can fill in the SHA early and animate progress.
+func (Fetcher) Fetch(s Source, onProgress func(sha string, files int)) (string, string, []FetchedFile, error) {
 	if s.IsGist() {
 		return gistFetch(s, onProgress)
 	}
+	sha, files, err := repoFetch(s, onProgress)
+	return sha, "", files, err
+}
+
+// repoFetch resolves a repository source, lists its tree, and downloads the
+// glob-matched blobs, returning the commit SHA and the matched files.
+func repoFetch(s Source, onProgress func(sha string, files int)) (string, []FetchedFile, error) {
 	client, err := newClient(resolveToken(s))
 	if err != nil {
 		return "", nil, err

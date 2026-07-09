@@ -15,6 +15,12 @@ type SourceState struct {
 	SHA      string    `json:"sha"`
 	PulledAt time.Time `json:"pulled_at"`
 	Files    []string  `json:"files"` // installed filenames (relative to InstallDir); also the prune manifest
+	// Owner is the gist owner's login, cached on each successful pull purely for
+	// display (list/file render "<owner>/gist:<id>"; see Source.Display). It is
+	// never part of a gist's identity - the id is - so it can drift on an owner
+	// rename and simply refreshes on the next pull. Empty for repos and for
+	// anonymous gists.
+	Owner string `json:"owner,omitempty"`
 	// Remote maps each installed file (a Files entry) to the repo-relative path
 	// it was pulled from, so `file list` can show the true source path and link
 	// to its GitHub blob. Absent on state written before this was recorded; such

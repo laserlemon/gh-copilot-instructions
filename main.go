@@ -220,8 +220,9 @@ func addCmd() *cobra.Command {
 			$ gh copilot-instructions source add https://github.com/acme/team-instructions/blob/main/style.instructions.md
 			$ gh copilot-instructions source add https://github.com/acme/team-instructions/tree/main/instructions
 
-			# Add a gist (by id or gist URL)
-			$ gh copilot-instructions source add gist/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4`),
+			# Add a gist (by gist:<id> or gist URL)
+			$ gh copilot-instructions source add gist:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4
+			$ gh copilot-instructions source add https://gist.github.com/octocat/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4`),
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := buildSource(args[0], ref, path, token)
@@ -323,9 +324,9 @@ func removeCmd() *cobra.Command {
 			if arg == "" {
 				return fmt.Errorf("specify a source or slug to remove, or use --all")
 			}
-			// A source (owner/repo, a gist/<id>, or any URL) contains a slash; a
-			// slug never does.
-			if strings.Contains(arg, "/") {
+			// A source spec (owner/repo, a gist:<id>, or any URL) contains a slash
+			// or the gist: scheme; a slug has neither.
+			if strings.Contains(arg, "/") || gci.IsGistSpec(arg) {
 				s, err := buildRemoveTarget(arg, ref, path)
 				if err != nil {
 					return err
@@ -430,15 +431,26 @@ func heredoc(s string) string {
 }
 
 // buildSource builds a source for `add` from a positional argument plus flags.
-// The argument is one of: a gist.github.com URL (parsed by ParseGist); a GitHub
-// blob URL - which carries its own ref and path, so --ref/--path are ignored and
-// ResolveSpec disambiguates a slashed branch name against the API; a GitHub tree
-// URL - which carries a ref and a directory that --path narrows within; or a bare
-// owner/repo or gist/<id>, whose ref/version and path come from the flags (both
-// are owner/repo-shaped, so ParseRepo handles them and IsGist routes the gist).
+// The argument is one of: a gist.github.com URL (parsed by ParseGist); the bare
+// gist:<id> shorthand (ParseGistArg), whose version/glob come from --ref/--path;
+// a GitHub blob URL - which carries its own ref and path, so --ref/--path are
+// ignored and ResolveSpec disambiguates a slashed branch name against the API; a
+// GitHub tree URL - which carries a ref and a directory that --path narrows
+// within; or a bare owner/repo (ParseRepo), whose ref/path come from the flags.
 func buildSource(arg, ref, path, token string) (gci.Source, error) {
 	if gci.IsGistURL(arg) {
 		s, err := gci.ParseGist(arg)
+		if err != nil {
+			return s, err
+		}
+		applyRefPath(&s, ref, path)
+		if token != "" {
+			s.Token = token
+		}
+		return s, nil
+	}
+	if gci.IsGistSpec(arg) {
+		s, err := gci.ParseGistArg(arg)
 		if err != nil {
 			return s, err
 		}
@@ -470,13 +482,21 @@ func buildSource(arg, ref, path, token string) (gci.Source, error) {
 }
 
 // buildRemoveTarget builds the source to remove from a positional argument plus
-// flags. Like buildSource it accepts a gist URL, a blob URL, or a bare
-// owner/repo or gist/<id>, but it resolves offline (no network), because remove
+// flags. Like buildSource it accepts a gist URL, the gist:<id> shorthand, a blob
+// URL, or a bare owner/repo, but it resolves offline (no network), because remove
 // only needs to identify an already-configured source; the slug is the escape
 // hatch for the rare slashed-ref blob URL.
 func buildRemoveTarget(arg, ref, path string) (gci.Source, error) {
 	if gci.IsGistURL(arg) {
 		s, err := gci.ParseGist(arg)
+		if err != nil {
+			return s, err
+		}
+		applyRefPath(&s, ref, path)
+		return s, nil
+	}
+	if gci.IsGistSpec(arg) {
+		s, err := gci.ParseGistArg(arg)
 		if err != nil {
 			return s, err
 		}

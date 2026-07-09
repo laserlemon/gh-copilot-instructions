@@ -15,8 +15,7 @@ func TestIsGistURL(t *testing.T) {
 		}
 	}
 	no := []string{
-		"gist/abc123", // bare form is owner/repo-shaped, not a URL
-		"gist:abc123", // no longer a supported form
+		"gist:abc123", // the bare shorthand is a spec, not a URL
 		"o/r",
 		"https://github.com/o/r/blob/main/x.md",
 		"github.com/o/r",
@@ -39,17 +38,16 @@ func TestParseGist(t *testing.T) {
 		ref     string
 		wantErr bool
 	}{
-		{in: "gist.github.com/" + id, repo: "gist/" + id},
-		{in: "https://gist.github.com/" + id, repo: "gist/" + id},
-		{in: "https://gist.github.com/octocat/" + id, repo: "gist/" + id},
-		{in: "https://gist.github.com/octocat/" + id + "/" + rev, repo: "gist/" + id, ref: rev},
-		{in: "https://gist.github.com/octocat/" + id + ".git", repo: "gist/" + id},
-		{in: "https://gist.github.com/octocat/" + id + "#file-x-md", repo: "gist/" + id},
+		{in: "gist.github.com/" + id, repo: "gist:" + id},
+		{in: "https://gist.github.com/" + id, repo: "gist:" + id},
+		{in: "https://gist.github.com/octocat/" + id, repo: "gist:" + id},
+		{in: "https://gist.github.com/octocat/" + id + "/" + rev, repo: "gist:" + id, ref: rev},
+		{in: "https://gist.github.com/octocat/" + id + ".git", repo: "gist:" + id},
+		{in: "https://gist.github.com/octocat/" + id + "#file-x-md", repo: "gist:" + id},
 		// A non-40-hex trailing segment is not treated as a version.
-		{in: "https://gist.github.com/octocat/" + id + "/raw", repo: "gist/" + id},
-		// Errors: not a gist URL (the bare gist/<id> form is parsed elsewhere).
+		{in: "https://gist.github.com/octocat/" + id + "/raw", repo: "gist:" + id},
+		// Errors: not a gist URL (the bare gist:<id> shorthand is parsed elsewhere).
 		{in: "gist:" + id, wantErr: true},
-		{in: "gist/" + id, wantErr: true},
 		{in: "", wantErr: true},
 		{in: "o/r", wantErr: true},
 	}
@@ -74,29 +72,30 @@ func TestParseGist(t *testing.T) {
 	}
 }
 
-// TestBareGistFormIsGist verifies the bare gist/<id> form parses through the
-// ordinary owner/repo path (ParseRepo/ParseSpec) and is recognized as a gist -
-// no gist-specific input parser needed, since github.com/gist is reserved.
-func TestBareGistFormIsGist(t *testing.T) {
+// TestParseGistArg covers the bare "gist:<id>" CLI shorthand: it yields a gist
+// source, and (like ParseRepo) rejects an inline @ref or :path in favor of the
+// --ref/--path flags.
+func TestParseGistArg(t *testing.T) {
 	const id = "aa5a315d61ae9438b18d"
-	repo, err := ParseRepo("gist/" + id)
+	s, err := ParseGistArg("gist:" + id)
 	if err != nil {
-		t.Fatalf("ParseRepo(gist/<id>): %v", err)
+		t.Fatalf("ParseGistArg(gist:<id>): %v", err)
 	}
-	if !repo.IsGist() || repo.GistID() != id {
-		t.Fatalf("ParseRepo(gist/<id>): IsGist=%v GistID=%q", repo.IsGist(), repo.GistID())
+	if !s.IsGist() || s.GistID() != id || s.Repo != "gist:"+id {
+		t.Fatalf("ParseGistArg(gist:<id>) = %+v", s)
 	}
-	spec, err := ParseSpec("gist/" + id + "@v1:*.md")
-	if err != nil {
-		t.Fatalf("ParseSpec(gist spec): %v", err)
+	for _, bad := range []string{"gist:" + id + "@v1", "gist:" + id + ":*.md", "gist:", "gist:no/slash"} {
+		if _, err := ParseGistArg(bad); err == nil {
+			t.Errorf("ParseGistArg(%q): expected error", bad)
+		}
 	}
-	if !spec.IsGist() || spec.Ref != "v1" || spec.Path != "*.md" {
-		t.Fatalf("ParseSpec(gist spec) = %+v", spec)
+	if !IsGistSpec("gist:abc") || IsGistSpec("o/r") || IsGistSpec("abc123") {
+		t.Errorf("IsGistSpec routing is wrong")
 	}
 }
 
 func TestGistIsGistAndID(t *testing.T) {
-	s, _ := ParseRepo("gist/deadbeef")
+	s, _ := ParseGistArg("gist:deadbeef")
 	if !s.IsGist() || s.GistID() != "deadbeef" {
 		t.Fatalf("IsGist=%v GistID=%q", s.IsGist(), s.GistID())
 	}
@@ -104,28 +103,75 @@ func TestGistIsGistAndID(t *testing.T) {
 	if repo.IsGist() {
 		t.Errorf("owner/repo source should not be a gist")
 	}
+	// "gist/abc" is now an ordinary owner/repo (owner "gist"), not a gist.
+	notGist, err := ParseSpec("gist/abc")
+	if err != nil || notGist.IsGist() {
+		t.Errorf("gist/abc should parse as an ordinary repo, not a gist: %+v (err %v)", notGist, err)
+	}
 }
 
 // TestGistSpecRoundTrips verifies the canonical config line for a gist round-trips
-// through ParseSpec/ParseLine (it is owner/repo-shaped, "gist/<id>"), so it keeps
-// a stable id and reloads as the same gist source.
+// through ParseSpec (special-cased on the "gist:" scheme), keeping a stable id and
+// carrying an inline version/glob back and forth.
 func TestGistSpecRoundTrips(t *testing.T) {
 	s, _ := ParseGist("gist.github.com/aa5a315d61ae9438b18d")
+	s.Ref = "e28eb6df72fb90a84015cb6fda9104bff345ae48"
+	s.Path = "*.md"
 	again, err := ParseSpec(s.Spec())
 	if err != nil {
 		t.Fatalf("ParseSpec(%q): %v", s.Spec(), err)
 	}
-	if again.ID() != s.ID() || !again.IsGist() || again.GistID() != s.GistID() {
+	if again.ID() != s.ID() || !again.IsGist() || again.GistID() != s.GistID() ||
+		again.Ref != s.Ref || again.Path != s.Path {
 		t.Fatalf("round-trip mismatch: %+v vs %+v", again, s)
 	}
 }
 
+// TestGistDisplay covers the human-facing identifier: "<owner>/gist:<id>" when the
+// owner is known, falling back to the stored "gist:<id>" otherwise; a repo ignores
+// the owner argument.
+func TestGistDisplay(t *testing.T) {
+	g := Source{Repo: "gist:abc"}
+	if got := g.Display("octocat"); got != "octocat/gist:abc" {
+		t.Errorf("Display(owner) = %q, want octocat/gist:abc", got)
+	}
+	if got := g.Display(""); got != "gist:abc" {
+		t.Errorf("Display(anonymous) = %q, want gist:abc", got)
+	}
+	r := Source{Repo: "o/r"}
+	if got := r.Display("ignored"); got != "o/r" {
+		t.Errorf("Display(repo) = %q, want o/r", got)
+	}
+}
+
+func TestGistOwner(t *testing.T) {
+	if got := gistOwner(gistResponse{}); got != "" {
+		t.Errorf("gistOwner(anonymous) = %q, want empty", got)
+	}
+	g := gistResponse{Owner: &struct {
+		Login string `json:"login"`
+	}{Login: "octocat"}}
+	if got := gistOwner(g); got != "octocat" {
+		t.Errorf("gistOwner = %q, want octocat", got)
+	}
+}
+
+func TestGistFileURL(t *testing.T) {
+	const id = "aa5a315d61ae9438b18d"
+	if got := gistFileURL(id, "sha1", "", "Setup.instructions.md"); got != "https://gist.github.com/"+id+"/sha1#file-setup-instructions-md" {
+		t.Errorf("gistFileURL(pinned) = %q", got)
+	}
+	if got := gistFileURL(id, "", "", "notes.md"); got != "https://gist.github.com/"+id+"#file-notes-md" {
+		t.Errorf("gistFileURL(latest) = %q", got)
+	}
+}
+
 func TestGistPathAndVersion(t *testing.T) {
-	latest := Source{Repo: "gist/abc"}
+	latest := Source{Repo: "gist:abc"}
 	if got := gistPath(latest); got != "gists/abc" {
 		t.Errorf("gistPath(latest) = %q, want gists/abc", got)
 	}
-	pinned := Source{Repo: "gist/abc", Ref: "v1"}
+	pinned := Source{Repo: "gist:abc", Ref: "v1"}
 	if got := gistPath(pinned); got != "gists/abc/v1" {
 		t.Errorf("gistPath(pinned) = %q, want gists/abc/v1", got)
 	}
@@ -144,14 +190,14 @@ func TestGistPathAndVersion(t *testing.T) {
 // the same path rules as repo files: the default **/*.instructions.md matches a
 // top-level instructions file, and a filename glob narrows within the gist.
 func TestGistMatchesFlatFilenames(t *testing.T) {
-	def := Source{Repo: "gist/abc"} // default path
+	def := Source{Repo: "gist:abc"} // default path
 	if !def.matches("ruby.instructions.md") {
 		t.Error("default should match a flat *.instructions.md gist file")
 	}
 	if def.matches("notes.md") {
 		t.Error("default should not match a plain .md gist file")
 	}
-	glob := Source{Repo: "gist/abc", Path: "*.md"}
+	glob := Source{Repo: "gist:abc", Path: "*.md"}
 	if !glob.matches("notes.md") || glob.matches("sub/deep.md") {
 		t.Error("*.md filename glob behaved unexpectedly for a gist")
 	}

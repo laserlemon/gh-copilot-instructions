@@ -310,6 +310,15 @@ func TestTargetMatches(t *testing.T) {
 	if !targetMatches("o/r@v2:sub", "sluggy", "o/r", "v2", "sub") {
 		t.Error("full spec should match its exact coordinates")
 	}
+
+	// A gist target (no slash) routes as a spec via the "gist:" scheme, matching
+	// a gist source by its coordinates rather than being read as a slug.
+	if !targetMatches("gist:abc", "sluggy", "gist:abc", "", "") {
+		t.Error("gist:<id> should match a gist source by coordinates")
+	}
+	if targetMatches("gist:abc", "sluggy", "gist:def", "", "") {
+		t.Error("gist:<id> should not match a different gist")
+	}
 }
 
 func TestIsGitHubURL(t *testing.T) {

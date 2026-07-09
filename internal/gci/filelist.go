@@ -50,7 +50,7 @@ func (a *App) FileRows() ([]FileRow, ConfigOrigin, error) {
 			remote := ss.Remote[f]
 			row := FileRow{
 				Source: s.ID(),
-				Repo:   s.Repo,
+				Repo:   s.Display(ss.Owner),
 				Ref:    s.Ref,
 				SHA:    ss.SHA,
 				Remote: remote,
@@ -59,6 +59,8 @@ func (a *App) FileRows() ([]FileRow, ConfigOrigin, error) {
 			if remote == "" {
 				// Pre-remote state: best-effort fall back to the installed name.
 				row.Remote = strings.TrimPrefix(f, prefix)
+			} else if s.IsGist() {
+				row.URL = gistFileURL(s.GistID(), ss.SHA, s.Ref, remote)
 			} else {
 				row.URL = blobURL(s.Repo, blobRef(ss.SHA, s.Ref), remote)
 			}
@@ -98,6 +100,38 @@ func blobURL(repo, ref, remote string) string {
 		segs[i] = url.PathEscape(s)
 	}
 	return fmt.Sprintf("https://github.com/%s/blob/%s/%s", repo, url.PathEscape(ref), strings.Join(segs, "/"))
+}
+
+// gistFileURL builds a gist.github.com URL for one file in a gist: the gist at
+// its pulled revision (a permalink when the version SHA is known, else the pinned
+// ref), with a "#file-..." fragment anchoring the specific file. gists are flat,
+// so filename is a bare name.
+func gistFileURL(id, sha, ref, filename string) string {
+	u := "https://gist.github.com/" + id
+	if v := blobRef(sha, ref); v != "" && v != "HEAD" {
+		u += "/" + url.PathEscape(v)
+	}
+	return u + "#file-" + gistFileAnchor(filename)
+}
+
+// gistFileAnchor renders GitHub's "#file-..." anchor slug for a gist filename:
+// lowercased, with each run of non-alphanumeric characters collapsed to a single
+// hyphen (e.g. "Setup.instructions.md" -> "setup-instructions-md").
+func gistFileAnchor(name string) string {
+	var b strings.Builder
+	pendingDash := false
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			if pendingDash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			b.WriteRune(r)
+			pendingDash = false
+		} else {
+			pendingDash = true
+		}
+	}
+	return b.String()
 }
 
 // fileSourceJSON is the nested `source` object in file JSON: a small subset of
