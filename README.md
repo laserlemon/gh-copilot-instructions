@@ -117,6 +117,14 @@ gh copilot-instructions add https://gist.github.com/octocat/aa5a315d61ae9438b18d
 Private gists need a token with **gist** scope (inline, or via the token resolution below), the same
 way a private repo needs one that can read repository contents.
 
+If a source repository is **renamed or transferred** on GitHub, `pull` follows it automatically:
+when the repo is verified to be the same one (its numeric id is pinned on the first pull and
+re-checked on every pull), the source is updated in place to the new `owner/repo` — the config file
+is rewritten for you (or, if your sources come from `GH_COPILOT_INSTRUCTIONS`, you're told the exact
+change to make), and the row shows the new name. If the old name is later **reclaimed** by a
+*different* repository, that mismatch is detected and the source's pull fails rather than silently
+installing someone else's content — remove and re-add it to track the new repo.
+
 Configuration lives in **one of two places, same format**:
 
 - **Local file** `~/.config/gh-copilot-instructions/sources` (mode `600`), managed by `add`/`remove`.

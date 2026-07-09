@@ -169,7 +169,13 @@ func (a *App) renderTable(w io.Writer, views []rowView, isTTY bool, width int, c
 		}
 
 		addCell(r.ID, cs.Cyan)
-		addCell(r.Repo, nil)
+		// A followed rename italicizes the (new) repo name, mirroring how an
+		// updated SHA is italicized; a dim row still overrides to gray.
+		if r.Renamed {
+			addCell(r.Repo, cs.Italic)
+		} else {
+			addCell(r.Repo, nil)
+		}
 		if r.Ref == "" {
 			addCell("-", cs.Gray) // default branch
 		} else {
