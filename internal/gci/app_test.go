@@ -14,11 +14,13 @@ import (
 // fakeFetcher serves canned content keyed by source id, with a controllable SHA
 // and a call counter to assert skip-when-unchanged.
 type fakeFetcher struct {
-	sha      map[string]string
-	files    map[string][]FetchedFile
-	owners   map[string]string // gist owner login keyed by source id (optional)
-	fetches  int
-	resolves int
+	sha       map[string]string
+	files     map[string][]FetchedFile
+	owners    map[string]string // gist owner login keyed by source id (optional)
+	repoIDs   map[string]int64  // repo id keyed by source id (optional; for rename/reclaim tests)
+	canonical map[string]string // canonical owner/repo keyed by source id (optional; defaults to s.Repo)
+	fetches   int
+	resolves  int
 }
 
 func (f *fakeFetcher) ResolveSHA(s Source) (string, error) {
@@ -26,7 +28,7 @@ func (f *fakeFetcher) ResolveSHA(s Source) (string, error) {
 	return f.sha[s.ID()], nil
 }
 
-func (f *fakeFetcher) Fetch(s Source, onProgress func(sha string, files int)) (string, string, []FetchedFile, error) {
+func (f *fakeFetcher) Fetch(s Source, onProgress func(sha string, files int)) (FetchResult, error) {
 	f.fetches++
 	sha := f.sha[s.ID()]
 	files := f.files[s.ID()]
@@ -36,7 +38,17 @@ func (f *fakeFetcher) Fetch(s Source, onProgress func(sha string, files int)) (s
 			onProgress(sha, i+1)
 		}
 	}
-	return sha, f.owners[s.ID()], files, nil
+	res := FetchResult{SHA: sha, Files: files, Owner: f.owners[s.ID()]}
+	if !s.IsGist() {
+		// Repositories carry an identity; a gist does not. canonical/repoID let a
+		// test simulate a rename (different canonical) or reclaim (different id).
+		res.RepoID = f.repoIDs[s.ID()]
+		res.CanonicalRepo = f.canonical[s.ID()]
+		if res.CanonicalRepo == "" {
+			res.CanonicalRepo = s.Repo
+		}
+	}
+	return res, nil
 }
 
 func newTestApp(t *testing.T, f fetcher) *App {
@@ -521,15 +533,15 @@ func TestPullSourceUpdatedFlag(t *testing.T) {
 	})
 
 	// Brand-new source (no prior state) is "pulled", not "updated".
-	if out := a.pullSource(src, SourceState{}, false, nil); out.updated {
+	if out := a.pullSource(src, SourceState{}, false, false, nil); out.updated {
 		t.Errorf("brand-new source should not be updated")
 	}
 	// Existing source whose SHA moved is "updated".
-	if out := a.pullSource(src, SourceState{Repo: "o/r", SHA: "oldsha"}, true, nil); !out.updated {
+	if out := a.pullSource(src, SourceState{Repo: "o/r", SHA: "oldsha"}, true, false, nil); !out.updated {
 		t.Errorf("moved existing source should be updated")
 	}
 	// Existing source at the same SHA is not "updated".
-	if out := a.pullSource(src, SourceState{Repo: "o/r", SHA: "newsha1111111111111111111111111111111111"}, true, nil); out.updated {
+	if out := a.pullSource(src, SourceState{Repo: "o/r", SHA: "newsha1111111111111111111111111111111111"}, true, false, nil); out.updated {
 		t.Errorf("unchanged existing source should not be updated")
 	}
 }
@@ -731,8 +743,8 @@ func TestWriteJSONCompact(t *testing.T) {
 type errFetcher struct{ err error }
 
 func (f *errFetcher) ResolveSHA(Source) (string, error) { return "", f.err }
-func (f *errFetcher) Fetch(Source, func(string, int)) (string, string, []FetchedFile, error) {
-	return "", "", nil, f.err
+func (f *errFetcher) Fetch(Source, func(string, int)) (FetchResult, error) {
+	return FetchResult{}, f.err
 }
 
 // TestFailedAddRecordsFailedState is the #9 regression: a failed add must be
@@ -1044,5 +1056,128 @@ func TestRepeatedFailureUpdatesPulledAt(t *testing.T) {
 	st2, _ := a.Paths.LoadState()
 	if got := st2.Sources[s.ID()].PulledAt; !got.After(ss.PulledAt) {
 		t.Fatalf("repeated failure should report the latest time: backdated %v, got %v", ss.PulledAt, got)
+	}
+}
+
+// TestPullFollowsRenameFile covers the default rename-follow for a file-based
+// source: a repo whose canonical name changes (same repo id) is followed - the
+// config line is rewritten in place, the state is re-keyed to the new slug, and
+// a warning naming the transition is surfaced.
+func TestPullFollowsRenameFile(t *testing.T) {
+	old, _ := ParseSpec("acme/foo")
+	oldID := old.ID()
+	f := &fakeFetcher{
+		sha:       map[string]string{oldID: "sha1"},
+		files:     map[string][]FetchedFile{oldID: {{Rel: "x.instructions.md", Content: []byte("x")}}},
+		repoIDs:   map[string]int64{oldID: 123},
+		canonical: map[string]string{oldID: "acme/foo"},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(old); err != nil {
+		t.Fatal(err)
+	}
+	// First pull pins the repo id under the original name.
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := a.Paths.LoadState()
+	if ss := st.Sources[oldID]; ss.RepoID != 123 {
+		t.Fatalf("repo id not pinned on first pull: %+v", ss)
+	}
+	// The repo is renamed to acme/bar (same id); the redirect makes the fetch
+	// report the new canonical name. A moved SHA forces a real fetch (not a skip).
+	f.canonical[oldID] = "acme/bar"
+	f.sha[oldID] = "sha2"
+	a.Err.(*bytes.Buffer).Reset()
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	// Config line rewritten in place to the new canonical name.
+	srcs, origin, _ := a.Paths.LoadSources()
+	if origin != OriginFile || len(srcs) != 1 || srcs[0].Repo != "acme/bar" {
+		t.Fatalf("config not followed to acme/bar: %+v", srcs)
+	}
+	newID := srcs[0].ID()
+	if newID == oldID {
+		t.Fatal("slug should change on rename")
+	}
+	// State re-keyed to the new slug; old entry dropped.
+	st2, _ := a.Paths.LoadState()
+	if _, ok := st2.Sources[oldID]; ok {
+		t.Fatal("old-slug state remained after follow")
+	}
+	if ss, ok := st2.Sources[newID]; !ok || ss.Repo != "acme/bar" || ss.RepoID != 123 {
+		t.Fatalf("state not migrated to new slug: %+v", ss)
+	}
+	// File-origin warning copy.
+	if out := a.Err.(*bytes.Buffer).String(); !strings.Contains(out, "acme/foo  is now acme/bar. Updated the config file to follow it.") {
+		t.Fatalf("missing file rename warning, got:\n%s", out)
+	}
+}
+
+// TestPullRenameEnvWarnsNoRewrite covers the env-config case: a rename is
+// detected and warned about (with the manual change to make), but nothing is
+// re-slugged or rewritten, since we can't edit the user's environment.
+func TestPullRenameEnvWarnsNoRewrite(t *testing.T) {
+	old, _ := ParseSpec("acme/foo")
+	oldID := old.ID()
+	f := &fakeFetcher{
+		sha:       map[string]string{oldID: "sha1"},
+		files:     map[string][]FetchedFile{oldID: {{Rel: "x.instructions.md", Content: []byte("x")}}},
+		repoIDs:   map[string]int64{oldID: 123},
+		canonical: map[string]string{oldID: "acme/bar"}, // already renamed on the remote
+	}
+	a := newTestApp(t, f)
+	t.Setenv(EnvSources, "acme/foo")
+	a.Err.(*bytes.Buffer).Reset()
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	// State stays under the original slug (config, from env, still says acme/foo).
+	st, _ := a.Paths.LoadState()
+	if _, ok := st.Sources[oldID]; !ok {
+		t.Fatalf("env source state should stay under the original slug: %+v", st.Sources)
+	}
+	if out := a.Err.(*bytes.Buffer).String(); !strings.Contains(out, "acme/foo  is now acme/bar. Change acme/foo to acme/bar in "+EnvSources+".") {
+		t.Fatalf("missing env rename warning, got:\n%s", out)
+	}
+}
+
+// TestPullReclaimFails covers the hijack guard: when the configured name resolves
+// to a DIFFERENT repo id than the one pinned, the pull fails and the prior good
+// install is left untouched.
+func TestPullReclaimFails(t *testing.T) {
+	old, _ := ParseSpec("acme/foo")
+	oldID := old.ID()
+	f := &fakeFetcher{
+		sha:       map[string]string{oldID: "sha1"},
+		files:     map[string][]FetchedFile{oldID: {{Rel: "x.instructions.md", Content: []byte("x")}}},
+		repoIDs:   map[string]int64{oldID: 123},
+		canonical: map[string]string{oldID: "acme/foo"},
+	}
+	a := newTestApp(t, f)
+	if err := a.Paths.AddSource(old); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Pull("", false); err != nil {
+		t.Fatal(err)
+	}
+	// The old name is reclaimed by a different repo (new id); content differs so a
+	// real fetch happens.
+	f.repoIDs[oldID] = 456
+	f.sha[oldID] = "sha2"
+	a.Err.(*bytes.Buffer).Reset()
+	err := a.Pull("", false)
+	if err == nil {
+		t.Fatal("reclaim should fail the pull")
+	}
+	// The pinned id and prior install are preserved (not overwritten by the
+	// reclaimer's content).
+	st, _ := a.Paths.LoadState()
+	if ss := st.Sources[oldID]; ss.RepoID != 123 || ss.SHA != "sha1" {
+		t.Fatalf("reclaim should not overwrite pinned state: %+v", ss)
+	}
+	if out := a.Err.(*bytes.Buffer).String(); !strings.Contains(out, "different repository") {
+		t.Fatalf("missing reclaim failure message, got:\n%s", out)
 	}
 }

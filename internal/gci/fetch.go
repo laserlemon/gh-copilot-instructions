@@ -16,6 +16,19 @@ type FetchedFile struct {
 	Content []byte
 }
 
+// FetchResult is everything a pull learns about a source: the resolved version
+// SHA, the matched files, and (for repositories) the identity fields used to
+// detect renames and reclaims. For a gist, RepoID is 0 and CanonicalRepo is
+// empty (a gist's identity is its immutable id, so it never renames); Owner is
+// the gist owner login used for display.
+type FetchResult struct {
+	SHA           string
+	Files         []FetchedFile
+	Owner         string // gist owner login (display only); "" for repositories
+	RepoID        int64  // GitHub numeric repo id (repositories only; 0 for gists)
+	CanonicalRepo string // the API's canonical "owner/repo" (repositories only)
+}
+
 // resolveToken returns the token to use for a source, in precedence order:
 // inline -> GH_COPILOT_INSTRUCTIONS_TOKEN -> gh auth (go-gh) -> "" (anonymous).
 func resolveToken(s Source) string {
@@ -42,6 +55,28 @@ type commitInfo struct {
 			SHA string `json:"sha"`
 		} `json:"tree"`
 	} `json:"commit"`
+}
+
+// repoMeta is the subset of GET /repos/{owner}/{repo} we use to pin a repo's
+// identity: its immutable numeric id and its canonical full name. A rename or
+// transfer of the configured owner/repo returns the new full_name here (the API
+// follows the redirect), while the id stays the same - which is exactly what
+// lets a pull tell a rename (same id, new name) from a reclaim (new id).
+type repoMeta struct {
+	ID       int64  `json:"id"`
+	FullName string `json:"full_name"`
+}
+
+// resolveRepoMeta fetches a repository's identity (numeric id + canonical
+// full_name). The configured owner/repo is used verbatim; if it was renamed or
+// transferred, GitHub 301-redirects and go-gh follows it (same host, so the auth
+// header is preserved), so the returned full_name is the current canonical name.
+func resolveRepoMeta(client *api.RESTClient, repo string) (repoMeta, error) {
+	var m repoMeta
+	if err := client.Get(fmt.Sprintf("repos/%s", repo), &m); err != nil {
+		return m, err
+	}
+	return m, nil
 }
 
 // resolveCommit returns the commit info for a source's ref. A 40-hex ref is an
@@ -114,30 +149,37 @@ func (Fetcher) ResolveSHA(s Source) (string, error) {
 }
 
 // Fetch resolves the source and downloads its glob-matched files (content
-// verbatim), returning the version SHA, the owner login (gists only - "" for a
-// repository or an anonymous gist), and the files. A gist is fetched via the
-// Gists API (gistFetch); a repository via repoFetch. When onProgress is non-nil it
-// is called first with the resolved SHA (files=0), then with the running count
-// after each file, so callers can fill in the SHA early and animate progress.
-func (Fetcher) Fetch(s Source, onProgress func(sha string, files int)) (string, string, []FetchedFile, error) {
+// verbatim), returning a FetchResult (version SHA, files, and repo/gist identity
+// fields). A gist is fetched via the Gists API (gistFetch); a repository via
+// repoFetch. When onProgress is non-nil it is called first with the resolved SHA
+// (files=0), then with the running count after each file, so callers can fill in
+// the SHA early and animate progress.
+func (Fetcher) Fetch(s Source, onProgress func(sha string, files int)) (FetchResult, error) {
 	if s.IsGist() {
-		return gistFetch(s, onProgress)
+		sha, owner, files, err := gistFetch(s, onProgress)
+		return FetchResult{SHA: sha, Owner: owner, Files: files}, err
 	}
-	sha, files, err := repoFetch(s, onProgress)
-	return sha, "", files, err
+	return repoFetch(s, onProgress)
 }
 
 // repoFetch resolves a repository source, lists its tree, and downloads the
-// glob-matched blobs, returning the commit SHA and the matched files.
-func repoFetch(s Source, onProgress func(sha string, files int)) (string, []FetchedFile, error) {
+// glob-matched blobs. It also resolves the repo's identity (numeric id + canonical
+// full_name) so a pull can detect a rename or a reclaim.
+func repoFetch(s Source, onProgress func(sha string, files int)) (FetchResult, error) {
 	client, err := newClient(resolveToken(s))
 	if err != nil {
-		return "", nil, err
+		return FetchResult{}, err
 	}
+	meta, err := resolveRepoMeta(client, s.Repo)
+	if err != nil {
+		return FetchResult{}, err
+	}
+	res := FetchResult{RepoID: meta.ID, CanonicalRepo: meta.FullName}
 	ci, err := resolveCommit(client, s)
 	if err != nil {
-		return "", nil, err
+		return FetchResult{}, err
 	}
+	res.SHA = ci.SHA
 	if onProgress != nil {
 		onProgress(ci.SHA, 0) // SHA is known now, before any blob downloads
 	}
@@ -150,21 +192,20 @@ func repoFetch(s Source, onProgress func(sha string, files int)) (string, []Fetc
 	if prefix := literalTreePrefix(s.matchPatterns()); prefix != "" {
 		sub, err := descendTree(client, s.Repo, treeSHA, prefix)
 		if err != nil {
-			return "", nil, err
+			return FetchResult{}, err
 		}
 		if sub == "" {
-			return ci.SHA, nil, nil // the prefix directory doesn't exist: no matches
+			return res, nil // the prefix directory doesn't exist: no matches
 		}
 		treeSHA, base = sub, prefix+"/"
 	}
 	var tree treeResponse
 	if err := client.Get(fmt.Sprintf("repos/%s/git/trees/%s?recursive=1", s.Repo, treeSHA), &tree); err != nil {
-		return "", nil, err
+		return FetchResult{}, err
 	}
 	if tree.Truncated {
-		return "", nil, fmt.Errorf("%s: tree too large (truncated), narrow the path", s.Repo)
+		return FetchResult{}, fmt.Errorf("%s: tree too large (truncated), narrow the path", s.Repo)
 	}
-	var files []FetchedFile
 	for _, e := range tree.Tree {
 		rel := base + e.Path
 		if e.Type != "blob" || !s.matches(rel) {
@@ -172,18 +213,18 @@ func repoFetch(s Source, onProgress func(sha string, files int)) (string, []Fetc
 		}
 		var blob blobResponse
 		if err := client.Get(fmt.Sprintf("repos/%s/git/blobs/%s", s.Repo, e.SHA), &blob); err != nil {
-			return "", nil, fmt.Errorf("%s: %s: %w", s.Repo, rel, err)
+			return FetchResult{}, fmt.Errorf("%s: %s: %w", s.Repo, rel, err)
 		}
 		content, err := decodeBlob(blob)
 		if err != nil {
-			return "", nil, fmt.Errorf("%s: %s: %w", s.Repo, rel, err)
+			return FetchResult{}, fmt.Errorf("%s: %s: %w", s.Repo, rel, err)
 		}
-		files = append(files, FetchedFile{Rel: rel, Content: content})
+		res.Files = append(res.Files, FetchedFile{Rel: rel, Content: content})
 		if onProgress != nil {
-			onProgress(ci.SHA, len(files))
+			onProgress(ci.SHA, len(res.Files))
 		}
 	}
-	return ci.SHA, files, nil
+	return res, nil
 }
 
 // descendTree walks dir segment by segment from a root tree SHA, using a

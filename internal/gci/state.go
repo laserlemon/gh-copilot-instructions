@@ -15,6 +15,13 @@ type SourceState struct {
 	SHA      string    `json:"sha"`
 	PulledAt time.Time `json:"pulled_at"`
 	Files    []string  `json:"files"` // installed filenames (relative to InstallDir); also the prune manifest
+	// RepoID is the GitHub numeric repository id, pinned on each successful repo
+	// pull (trust-on-first-use). It is the stable, immutable identity of a repo
+	// across renames/transfers, so a future pull that resolves the configured
+	// owner/repo to a *different* id (the old name was reclaimed by someone else)
+	// can be detected and refused. 0 for gists (identity is the gist id) and for
+	// state written before this was recorded (repopulated on the next pull).
+	RepoID int64 `json:"repoId,omitempty"`
 	// Owner is the gist owner's login, cached on each successful pull purely for
 	// display (list/file render "<owner>/gist:<id>"; see Source.Display). It is
 	// never part of a gist's identity - the id is - so it can drift on an owner

@@ -18,8 +18,8 @@ func (f *refFetcher) ResolveSHA(s Source) (string, error) {
 	}
 	return "", errors.New("not found")
 }
-func (f *refFetcher) Fetch(Source, func(string, int)) (string, string, []FetchedFile, error) {
-	return "", "", nil, nil
+func (f *refFetcher) Fetch(Source, func(string, int)) (FetchResult, error) {
+	return FetchResult{}, nil
 }
 
 func TestResolveSpecSlashedRef(t *testing.T) {

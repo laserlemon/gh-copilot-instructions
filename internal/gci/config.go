@@ -146,6 +146,31 @@ func (p Paths) RemoveSource(target string) ([]Source, error) {
 	return removed, nil
 }
 
+// ReplaceSource swaps the file entry matching old (by its slug) for new, in
+// place - preserving the line's position. Used to follow a repository rename:
+// the old owner/repo line is rewritten to the new canonical name (with its ref,
+// path, and token intact). A no-op (with no error) when old isn't in the file,
+// e.g. when the active config came from the env var rather than the file.
+func (p Paths) ReplaceSource(old, new Source) error {
+	existing, err := p.readFileSources()
+	if err != nil {
+		return err
+	}
+	oldID := old.ID()
+	replaced := false
+	for i, e := range existing {
+		if e.ID() == oldID {
+			existing[i] = new
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		return nil
+	}
+	return p.writeFileSources(existing)
+}
+
 // ClearSources truncates the local sources file.
 func (p Paths) ClearSources() error {
 	if _, err := os.Stat(p.SourcesFile); os.IsNotExist(err) {

@@ -26,7 +26,7 @@ import (
 // SHA cell early and animate a live "files" counter during the (slow) fetch.
 type fetcher interface {
 	ResolveSHA(Source) (string, error)
-	Fetch(s Source, onProgress func(sha string, files int)) (sha string, owner string, files []FetchedFile, err error)
+	Fetch(s Source, onProgress func(sha string, files int)) (FetchResult, error)
 }
 
 // App holds the wiring for a command invocation.
@@ -171,22 +171,23 @@ func (a *App) Add(s Source, asJSON bool) error {
 		return err
 	}
 
-	srcs, _, lerr := a.Paths.LoadSources()
+	srcs, origin, lerr := a.Paths.LoadSources()
 	if lerr != nil && !asJSON {
 		a.msg("%v", lerr)
 	}
 	target := indexOfID(srcs, s.ID())
+	follow := origin == OriginFile
 
 	if asJSON {
 		prev, has := st.Sources[s.ID()]
-		out := a.pullSource(s, prev, has, nil)
-		st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
+		out := a.pullSource(s, prev, has, follow, nil)
+		a.applyPullOutcome(st, s, origin, out) // records state (re-keying on a followed rename)
 		if e := a.Paths.Save(st); e != nil {
 			return e
 		}
 		upd := map[string]bool{}
 		if out.updated {
-			upd[s.ID()] = true
+			upd[a.pulledID(s, out)] = true
 		}
 		if err := a.renderSourceListJSON(upd); err != nil {
 			return err
@@ -197,8 +198,8 @@ func (a *App) Add(s Source, asJSON bool) error {
 	t := term.FromEnv()
 	if !t.IsTerminalOutput() || target < 0 {
 		prev, has := st.Sources[s.ID()]
-		out := a.pullSource(s, prev, has, nil)
-		st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
+		out := a.pullSource(s, prev, has, follow, nil)
+		warn := a.applyPullOutcome(st, s, origin, out)
 		if e := a.Paths.Save(st); e != nil {
 			return e
 		}
@@ -207,13 +208,17 @@ func (a *App) Add(s Source, asJSON bool) error {
 			return ErrReported
 		}
 		a.printOutcome(s, out)
-		a.printPullFooter(out.warnings, s.ID())
+		warnings := out.warnings
+		if warn != "" {
+			warnings = append(warnings, warn)
+		}
+		a.printPullFooter(warnings, a.pulledID(s, out))
 		return nil
 	}
 
 	rows := a.rowsFor(srcs, st)
 	cs, w := a.tableEnv(t)
-	warnings, fails := a.animate(rows, srcs, []int{target}, true, st, cs, w)
+	warnings, fails := a.animate(rows, srcs, []int{target}, true, origin, st, cs, w)
 	if e := a.Paths.Save(st); e != nil {
 		return e
 	}
@@ -259,16 +264,17 @@ func (a *App) Pull(filter string, asJSON bool) error {
 		return fmt.Errorf("no configured source matches %q", filter)
 	}
 
+	follow := origin == OriginFile
 	if asJSON {
 		upd := map[string]bool{}
 		var firstErr error
 		for _, i := range targets {
 			s := srcs[i]
 			prev, has := st.Sources[s.ID()]
-			out := a.pullSource(s, prev, has, nil)
-			st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
+			out := a.pullSource(s, prev, has, follow, nil)
+			a.applyPullOutcome(st, s, origin, out) // records state (re-keying on a followed rename)
 			if out.updated {
-				upd[s.ID()] = true
+				upd[a.pulledID(s, out)] = true
 			}
 			if out.err != nil && firstErr == nil {
 				firstErr = out.err
@@ -290,14 +296,17 @@ func (a *App) Pull(filter string, asJSON bool) error {
 		for _, i := range targets {
 			s := srcs[i]
 			prev, has := st.Sources[s.ID()]
-			out := a.pullSource(s, prev, has, nil)
-			st.Sources[s.ID()] = out.newState // record every attempt (FAILED included)
+			out := a.pullSource(s, prev, has, follow, nil)
+			warn := a.applyPullOutcome(st, s, origin, out) // records state (re-keying on a followed rename)
 			if out.err != nil {
 				fails = append(fails, sourceFail{s.Repo, out.err})
 				continue
 			}
 			a.printOutcome(s, out)
 			warnings = append(warnings, out.warnings...)
+			if warn != "" {
+				warnings = append(warnings, warn)
+			}
 		}
 		if err := a.Paths.Save(st); err != nil {
 			return err
@@ -314,7 +323,7 @@ func (a *App) Pull(filter string, asJSON bool) error {
 	cs, w := a.tableEnv(t)
 	// A filtered pull focuses the matched rows (and dims the rest), like add; an
 	// unfiltered pull animates every row with no dimming.
-	warnings, fails := a.animate(rows, srcs, targets, filter != "", st, cs, w)
+	warnings, fails := a.animate(rows, srcs, targets, filter != "", origin, st, cs, w)
 	if e := a.Paths.Save(st); e != nil {
 		return e
 	}
@@ -382,16 +391,15 @@ var spinnerFrames = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "�
 // liveRow holds the in-flight progress of one animating row, written by its pull
 // goroutine and read by the render ticker.
 type liveRow struct {
-	mu       sync.Mutex
-	sha      string
-	updated  bool
-	files    int
-	start    time.Time
-	done     bool
-	final    Row
-	newState SourceState
-	warnings []string
-	err      error
+	mu      sync.Mutex
+	sha     string
+	updated bool
+	files   int
+	start   time.Time
+	done    bool
+	final   Row
+	out     pullOutcome // the completed pull result, applied to State after the animation
+	err     error
 }
 
 // animate pulls the targeted rows ONE AT A TIME (sequentially) while rendering
@@ -401,8 +409,9 @@ type liveRow struct {
 // full-color static. Results are applied to st; it returns the warnings and the
 // per-source failures collected across the pulled sources, for the caller's
 // secondary block.
-func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, st *State, cs *ColorScheme, width int) ([]string, []sourceFail) {
+func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, origin ConfigOrigin, st *State, cs *ColorScheme, width int) ([]string, []sourceFail) {
 	out := a.Out
+	follow := origin == OriginFile
 
 	// Per-target state, indexed by position in the targets order.
 	lives := make([]*liveRow, len(targets))
@@ -433,7 +442,7 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 				lr.files = files
 				lr.mu.Unlock()
 			}
-			o := a.pullSource(srcs[i], prevs[p], hasPrev[p], onProgress)
+			o := a.pullSource(srcs[i], prevs[p], hasPrev[p], follow, onProgress)
 			final := o.row
 			if o.err != nil {
 				// Show the failure using the just-recorded state (which carries
@@ -446,9 +455,8 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 			lr.done = true
 			lr.err = o.err
 			lr.final = final
-			lr.newState = o.newState
 			lr.updated = o.updated
-			lr.warnings = o.warnings
+			lr.out = o
 			lr.mu.Unlock()
 			doneCh <- struct{}{}
 		}()
@@ -524,7 +532,8 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 
 	// Apply results (all goroutines have finished). Every attempt is recorded -
 	// a failed pull of a new source persists as FAILED (not PENDING); an
-	// existing source keeps its prior good install (pullSource's failState).
+	// existing source keeps its prior good install (pullSource's failState). A
+	// followed rename re-keys state to the new slug and rewrites the config line.
 	var fails []sourceFail
 	var warnings []string
 	for p, i := range targets {
@@ -532,8 +541,11 @@ func (a *App) animate(rows []Row, srcs []Source, targets []int, dimOthers bool, 
 		if lr.err != nil {
 			fails = append(fails, sourceFail{srcs[i].Repo, lr.err})
 		}
-		st.Sources[srcs[i].ID()] = lr.newState
-		warnings = append(warnings, lr.warnings...)
+		warn := a.applyPullOutcome(st, srcs[i], origin, lr.out)
+		warnings = append(warnings, lr.out.warnings...)
+		if warn != "" {
+			warnings = append(warnings, warn)
+		}
 	}
 	return warnings, fails
 }
@@ -580,7 +592,16 @@ type pullOutcome struct {
 	updated  bool        // an existing source's SHA moved (new/unchanged => false)
 	skipped  bool        // already up to date; no fetch happened
 	warnings []string    // non-fatal messages (no match, collisions, unsafe paths)
-	err      error
+	// renamed, when non-nil, is the source under its NEW canonical name after a
+	// followed rename/transfer (file origin only): row and newState are for this
+	// renamed source (new slug), and the caller re-keys state old->new and
+	// rewrites the config line. renamedFrom is set on both file and env origins
+	// (env can't rewrite config) so the caller can emit the origin-specific
+	// warning naming the old->new transition.
+	renamed     *Source
+	renamedFrom string // old canonical "owner/repo" when a rename was detected
+	renamedTo   string // new canonical "owner/repo" when a rename was detected
+	err         error
 }
 
 // pullSource pulls one source given its previously recorded state. It is pure
@@ -588,7 +609,7 @@ type pullOutcome struct {
 // for the caller to apply, and never mutates *State or prints (so it is safe to
 // run concurrently for distinct sources). onProgress, when non-nil, reports the
 // resolved SHA (early, before blobs) and the running file count.
-func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress func(sha string, files int)) pullOutcome {
+func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, follow bool, onProgress func(sha string, files int)) pullOutcome {
 	now := time.Now().UTC()
 	// failState is what we persist when an attempt fails: a brand-new source
 	// becomes a recorded FAILED row (no files), and an existing source keeps its
@@ -629,16 +650,48 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 		}
 	}
 
-	sha, owner, files, err := a.F.Fetch(s, onProgress)
+	res, err := a.F.Fetch(s, onProgress)
 	if err != nil {
 		o := failState()
 		o.err = err
 		return o
 	}
-	var warnings []string
-	if len(files) == 0 {
-		warnings = append(warnings, fmt.Sprintf("%s  no files matched %s", s.Repo, s.effectivePath()))
+	sha := res.SHA
+
+	// Identity checks for a repository (res.CanonicalRepo is empty for gists,
+	// whose identity is the immutable gist id). Two distinct events:
+	//   reclaim - the configured owner/repo now resolves to a DIFFERENT repo id
+	//     than the one we pinned. The old name was reused by someone else, so the
+	//     content is not ours to trust: fail without installing.
+	//   rename  - the API's canonical name differs from the configured name (a
+	//     live redirect from a rename or transfer of the SAME repo). Follow it.
+	renamedFrom := ""
+	renamedTo := ""
+	eff := s                     // the source we actually install/record under
+	var renamedOut *Source       // set only when we follow (re-slug) a rename
+	if res.CanonicalRepo != "" { // a repository
+		if hasPrev && prev.RepoID != 0 && res.RepoID != 0 && res.RepoID != prev.RepoID {
+			o := failState()
+			o.err = fmt.Errorf("now resolves to a different repository - the old name was reclaimed by another owner; remove and re-add to track the new repo")
+			return o
+		}
+		if !strings.EqualFold(res.CanonicalRepo, s.Repo) {
+			renamedFrom = s.Repo
+			renamedTo = res.CanonicalRepo
+			if follow {
+				renamed := s
+				renamed.Repo = res.CanonicalRepo
+				eff = renamed
+				renamedOut = &renamed
+			}
+		}
 	}
+
+	var warnings []string
+	if len(res.Files) == 0 {
+		warnings = append(warnings, fmt.Sprintf("%s  no files matched %s", eff.Repo, eff.effectivePath()))
+	}
+	files := res.Files
 	// Order files so that, when two normalize to the same install name, the
 	// choice of which to keep is deterministic and explainable: prefer the file
 	// that already ends in ".instructions.md", then ".md", then anything else;
@@ -656,13 +709,13 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 	seen := map[string]string{}   // dest path -> repo path that produced it
 	missingApplyTo := 0           // installed files with no applyTo frontmatter value
 	for _, f := range files {
-		rel := s.DestPath(f.Rel)
+		rel := eff.DestPath(f.Rel)
 		if rel == "" {
-			warnings = append(warnings, fmt.Sprintf("%s  skipped unsafe path %s", s.Repo, f.Rel))
+			warnings = append(warnings, fmt.Sprintf("%s  skipped unsafe path %s", eff.Repo, f.Rel))
 			continue
 		}
 		if first, dup := seen[rel]; dup {
-			warnings = append(warnings, fmt.Sprintf("%s  %s and %s both map to %s, keeping %s", s.Repo, first, f.Rel, path.Base(rel), first))
+			warnings = append(warnings, fmt.Sprintf("%s  %s and %s both map to %s, keeping %s", eff.Repo, first, f.Rel, path.Base(rel), first))
 			continue
 		}
 		seen[rel] = f.Rel
@@ -682,29 +735,74 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 	// per source, with the fix.
 	if missingApplyTo > 0 {
 		warnings = append(warnings, fmt.Sprintf("%s  %d of %d installed %s no applyTo value, so VS Code won't auto-apply %s (add applyTo: '**').",
-			s.Repo, missingApplyTo, len(installed), have(missingApplyTo), them(missingApplyTo)))
+			eff.Repo, missingApplyTo, len(installed), have(missingApplyTo), them(missingApplyTo)))
 	}
-	// Prune this source's files that are no longer produced.
+	// Prune this source's files that are no longer produced. On a followed rename
+	// the old install lived under the old slug (a different DestPath prefix), so
+	// pruning prev.Files here also cleans up the entire old-slug directory.
 	if hasPrev {
 		a.prune(prev.Files, installed)
 	}
 	sort.Strings(installed)
 	ns := SourceState{
-		Repo:     s.Repo,
-		Ref:      s.Ref,
-		Path:     s.Path,
+		Repo:     eff.Repo,
+		Ref:      eff.Ref,
+		Path:     eff.Path,
 		SHA:      sha,
 		PulledAt: now,
 		Files:    installed,
-		Owner:    owner, // gist owner login for display; "" for repos/anonymous gists
+		Owner:    res.Owner, // gist owner login for display; "" for repos/anonymous gists
+		RepoID:   res.RepoID,
 		Remote:   remote,
 	}
-	return pullOutcome{
-		row:      a.rowForState(s, ns, true),
-		newState: ns,
-		updated:  hasPrev && sha != prev.SHA, // only an existing source moving counts as "updated"
-		warnings: warnings,
+	row := a.rowForState(eff, ns, true)
+	if renamedOut != nil {
+		row.Renamed = true // display the new name italicized, like a moved SHA
 	}
+	return pullOutcome{
+		row:         row,
+		newState:    ns,
+		updated:     renamedOut != nil || (hasPrev && sha != prev.SHA), // a moved SHA or a followed rename
+		warnings:    warnings,
+		renamed:     renamedOut,
+		renamedFrom: renamedFrom,
+		renamedTo:   renamedTo,
+	}
+}
+
+// pulledID returns the slug a pull's result is recorded under: the new slug when
+// a rename was followed (so the footer's install path and JSON "updated" key
+// point at the migrated source), else the source's existing slug.
+func (a *App) pulledID(s Source, out pullOutcome) string {
+	if out.renamed != nil {
+		return out.renamed.ID()
+	}
+	return s.ID()
+}
+
+// applyPullOutcome records a pull outcome into st and returns a rename warning to
+// surface in the secondary block (empty when there was no rename). When a rename
+// was followed (file origin), the recorded state is re-keyed to the new slug and
+// the old entry dropped; otherwise it is stored under the source's existing slug.
+// origin selects the warning copy and whether the config file is rewritten - env
+// config can't be rewritten, so we only instruct the user to change it themselves.
+func (a *App) applyPullOutcome(st *State, s Source, origin ConfigOrigin, out pullOutcome) string {
+	if out.renamed != nil {
+		delete(st.Sources, s.ID())
+		st.Sources[out.renamed.ID()] = out.newState
+	} else {
+		st.Sources[s.ID()] = out.newState
+	}
+	if out.renamedFrom == "" {
+		return ""
+	}
+	if origin == OriginFile {
+		if out.renamed != nil {
+			_ = a.Paths.ReplaceSource(s, *out.renamed) // best-effort; state already migrated
+		}
+		return fmt.Sprintf("%s  is now %s. Updated the config file to follow it.", out.renamedFrom, out.renamedTo)
+	}
+	return fmt.Sprintf("%s  is now %s. Change %s to %s in %s.", out.renamedFrom, out.renamedTo, out.renamedFrom, out.renamedTo, EnvSources)
 }
 
 // writeInstall writes one file at a forward-slash dest path relative to the
@@ -877,6 +975,7 @@ type Row struct {
 	SHA      string
 	PulledAt time.Time
 	Files    int
+	Renamed  bool // this pull followed a rename: render the (new) repo name italicized
 }
 
 // rowForState builds a Row for a source from a given SourceState (present=false
