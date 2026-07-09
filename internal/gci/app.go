@@ -26,7 +26,7 @@ import (
 // SHA cell early and animate a live "files" counter during the (slow) fetch.
 type fetcher interface {
 	ResolveSHA(Source) (string, error)
-	Fetch(s Source, onProgress func(sha string, files int)) (sha string, files []FetchedFile, err error)
+	Fetch(s Source, onProgress func(sha string, files int)) (sha string, owner string, files []FetchedFile, err error)
 }
 
 // App holds the wiring for a command invocation.
@@ -629,7 +629,7 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 		}
 	}
 
-	sha, files, err := a.F.Fetch(s, onProgress)
+	sha, owner, files, err := a.F.Fetch(s, onProgress)
 	if err != nil {
 		o := failState()
 		o.err = err
@@ -696,6 +696,7 @@ func (a *App) pullSource(s Source, prev SourceState, hasPrev bool, onProgress fu
 		SHA:      sha,
 		PulledAt: now,
 		Files:    installed,
+		Owner:    owner, // gist owner login for display; "" for repos/anonymous gists
 		Remote:   remote,
 	}
 	return pullOutcome{
@@ -882,7 +883,7 @@ type Row struct {
 // => a PENDING row with no recorded state): PULLED when every installed file is
 // present, FAILED when a file is missing or none matched.
 func (a *App) rowForState(s Source, ss SourceState, present bool) Row {
-	r := Row{State: StatePending, ID: s.ID(), Repo: s.Repo, Ref: s.Ref}
+	r := Row{State: StatePending, ID: s.ID(), Repo: s.Display(ss.Owner), Ref: s.Ref}
 	if present {
 		r.SHA = ss.SHA
 		r.PulledAt = ss.PulledAt

@@ -20,13 +20,25 @@ type gistFile struct {
 	Truncated bool   `json:"truncated"`
 }
 
-// gistResponse is the subset of GET /gists/{id} we use: the files map and the
-// version history (history[0] is the most recent revision).
+// gistResponse is the subset of GET /gists/{id} we use: the files map, the
+// version history (history[0] is the most recent revision), and the owner (null
+// for an anonymous gist), whose login we cache for display.
 type gistResponse struct {
 	Files   map[string]gistFile `json:"files"`
 	History []struct {
 		Version string `json:"version"`
 	} `json:"history"`
+	Owner *struct {
+		Login string `json:"login"`
+	} `json:"owner"`
+}
+
+// gistOwner returns the gist owner's login, or "" for an anonymous gist.
+func gistOwner(g gistResponse) string {
+	if g.Owner != nil {
+		return g.Owner.Login
+	}
+	return ""
 }
 
 // gistPath returns the Gists API path for a source: a pinned version when the
@@ -65,21 +77,23 @@ func gistResolveSHA(s Source) (string, error) {
 	return gistVersion(g, s.Ref), nil
 }
 
-// gistFetch resolves the gist, then returns its version SHA and the glob-matched
-// files (content verbatim). Files are matched by name against the source's path
-// glob - gists are flat, so ":path" is a filename glob. onProgress mirrors the
-// repo fetcher: it is called first with the resolved version (files=0), then
-// with the running count after each file.
-func gistFetch(s Source, onProgress func(sha string, files int)) (string, []FetchedFile, error) {
+// gistFetch resolves the gist, then returns its version SHA, the owner login (for
+// the display cache; "" when anonymous), and the glob-matched files (content
+// verbatim). Files are matched by name against the source's path glob - gists are
+// flat, so ":path" is a filename glob. onProgress mirrors the repo fetcher: it is
+// called first with the resolved version (files=0), then with the running count
+// after each file.
+func gistFetch(s Source, onProgress func(sha string, files int)) (string, string, []FetchedFile, error) {
 	token := resolveToken(s)
 	client, err := newClient(token)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	var g gistResponse
 	if err := client.Get(gistPath(s), &g); err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
+	owner := gistOwner(g)
 	version := gistVersion(g, s.Ref)
 	if onProgress != nil {
 		onProgress(version, 0) // version known now, before any raw downloads
@@ -107,7 +121,7 @@ func gistFetch(s Source, onProgress func(sha string, files int)) (string, []Fetc
 			// response); fetch the verbatim bytes from the file's raw URL.
 			b, err := fetchRaw(gf.RawURL, token)
 			if err != nil {
-				return "", nil, fmt.Errorf("gist %s: %s: %w", s.GistID(), rel, err)
+				return "", "", nil, fmt.Errorf("gist %s: %s: %w", s.GistID(), rel, err)
 			}
 			content = b
 		}
@@ -116,7 +130,7 @@ func gistFetch(s Source, onProgress func(sha string, files int)) (string, []Fetc
 			onProgress(version, len(files))
 		}
 	}
-	return version, files, nil
+	return version, owner, files, nil
 }
 
 // fetchRaw GETs a gist file's raw_url. Gist raw content is served from a

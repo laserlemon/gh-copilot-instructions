@@ -16,6 +16,7 @@ import (
 type fakeFetcher struct {
 	sha      map[string]string
 	files    map[string][]FetchedFile
+	owners   map[string]string // gist owner login keyed by source id (optional)
 	fetches  int
 	resolves int
 }
@@ -25,7 +26,7 @@ func (f *fakeFetcher) ResolveSHA(s Source) (string, error) {
 	return f.sha[s.ID()], nil
 }
 
-func (f *fakeFetcher) Fetch(s Source, onProgress func(sha string, files int)) (string, []FetchedFile, error) {
+func (f *fakeFetcher) Fetch(s Source, onProgress func(sha string, files int)) (string, string, []FetchedFile, error) {
 	f.fetches++
 	sha := f.sha[s.ID()]
 	files := f.files[s.ID()]
@@ -35,7 +36,7 @@ func (f *fakeFetcher) Fetch(s Source, onProgress func(sha string, files int)) (s
 			onProgress(sha, i+1)
 		}
 	}
-	return sha, files, nil
+	return sha, f.owners[s.ID()], files, nil
 }
 
 func newTestApp(t *testing.T, f fetcher) *App {
@@ -279,18 +280,20 @@ func TestRemoveOneByRepo(t *testing.T) {
 
 // TestGistSourceInstallsAndRemoves runs a gist source through pull and remove
 // with the fake fetcher: it installs its flat files under the gist slug (proving
-// DestPath/slug work for gists), and remove by the gist form prunes them.
+// DestPath/slug work for gists), caches the owner for display, and remove by the
+// gist form prunes them.
 func TestGistSourceInstallsAndRemoves(t *testing.T) {
-	gist, err := ParseSpec("gist/aa5a315d61ae9438b18d")
+	gist, err := ParseSpec("gist:aa5a315d61ae9438b18d")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !gist.IsGist() {
-		t.Fatalf("gist/<id> did not parse as a gist: %+v", gist)
+		t.Fatalf("gist:<id> did not parse as a gist: %+v", gist)
 	}
 	repo, _ := ParseSpec("o/r")
 	a := newTestApp(t, &fakeFetcher{
-		sha: map[string]string{gist.ID(): "gistsha", repo.ID(): "reposha"},
+		sha:    map[string]string{gist.ID(): "gistsha", repo.ID(): "reposha"},
+		owners: map[string]string{gist.ID(): "octocat"},
 		files: map[string][]FetchedFile{
 			gist.ID(): {{Rel: "style.instructions.md", Content: []byte("gist")}},
 			repo.ID(): {{Rel: "r.instructions.md", Content: []byte("repo")}},
@@ -317,8 +320,30 @@ func TestGistSourceInstallsAndRemoves(t *testing.T) {
 		t.Fatalf("gist file not installed at %q; have %v", want, ls(t, instDir(a)))
 	}
 	st, _ := a.Paths.LoadState()
-	if ss, ok := st.Sources[gist.ID()]; !ok || ss.SHA != "gistsha" {
+	ss, ok := st.Sources[gist.ID()]
+	if !ok || ss.SHA != "gistsha" {
 		t.Fatalf("gist state missing or wrong SHA: %+v", ss)
+	}
+	if ss.Owner != "octocat" {
+		t.Fatalf("gist owner not cached: %q", ss.Owner)
+	}
+	// The list row displays the attributed <owner>/gist:<id> form.
+	rows, _, err := a.ListRows()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDisplay := "octocat/gist:aa5a315d61ae9438b18d"
+	gistDisplayed := false
+	for _, r := range rows {
+		if r.ID == gist.ID() {
+			if r.Repo != wantDisplay {
+				t.Fatalf("gist row Repo = %q, want %q", r.Repo, wantDisplay)
+			}
+			gistDisplayed = true
+		}
+	}
+	if !gistDisplayed {
+		t.Fatalf("gist row not found in %v", rows)
 	}
 	// Remove by the gist spec (what the CLI passes for a gist form) prunes only
 	// the gist's files.
@@ -706,8 +731,8 @@ func TestWriteJSONCompact(t *testing.T) {
 type errFetcher struct{ err error }
 
 func (f *errFetcher) ResolveSHA(Source) (string, error) { return "", f.err }
-func (f *errFetcher) Fetch(Source, func(string, int)) (string, []FetchedFile, error) {
-	return "", nil, f.err
+func (f *errFetcher) Fetch(Source, func(string, int)) (string, string, []FetchedFile, error) {
+	return "", "", nil, f.err
 }
 
 // TestFailedAddRecordsFailedState is the #9 regression: a failed add must be

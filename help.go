@@ -37,7 +37,7 @@ var (
 		Desc: "A repository or gist to install instructions from. One of:",
 		Forms: []string{
 			"<owner/repo> - a repository (its default branch)",
-			"gist/<id> - a gist",
+			"gist:<id> - a gist",
 			"a github.com repository, tree (directory), or blob (file) URL",
 			"a gist.github.com URL",
 		},

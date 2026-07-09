@@ -27,10 +27,10 @@ or restart the desktop app to pick up changes).
 
 ```
 gh copilot-instructions                                                    # list sources (or show help on a fresh install)
-gh copilot-instructions source add [<owner/repo> | <blob-url> | <tree-url> | gist/<id> | <gist-url>] [--ref REF] [--path P] [--token T]
+gh copilot-instructions source add [<owner/repo> | <blob-url> | <tree-url> | gist:<id> | <gist-url>] [--ref REF] [--path P] [--token T]
 gh copilot-instructions source pull [<slug> | <owner/repo>]                 # pull all configured sources, or just one
 gh copilot-instructions source list [--raw]                                 # show sources and their pulled state
-gh copilot-instructions source remove [<owner/repo> | <blob-url> | <tree-url> | gist/<id> | <gist-url> | <slug>]  # remove one source and prune its files
+gh copilot-instructions source remove [<owner/repo> | <blob-url> | <tree-url> | gist:<id> | <gist-url> | <slug>]  # remove one source and prune its files
 gh copilot-instructions source remove --all                                 # remove every source, all installed files, and config
 gh copilot-instructions auto-pull [status]                                  # show whether scheduled pulling is enabled
 gh copilot-instructions auto-pull enable [--every hour|day|week|Nh|Nd|Nw]   # schedule background pulls (default: day)
@@ -50,7 +50,7 @@ and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly i
 - **`source add`** takes an `owner/repo` with optional `--ref`/`--path`, a **GitHub blob URL**
   (which carries its own ref and path, so `--ref`/`--path` are ignored), a **GitHub tree
   (directory) URL** (which carries a ref and a directory; the directory becomes a prefix over the
-  glob, and `--path` narrows within it), or a **gist** — `gist/<id>` or a `gist.github.com` URL
+  glob, and `--path` narrows within it), or a **gist** — `gist:<id>` or a `gist.github.com` URL
   (with optional `--ref` version and a `--path` filename glob). A glob `path` must be quoted and is
   repo-root-relative (a leading `/` is fine).
 - **`source pull`** is incremental: it resolves each source's current commit SHA and **skips** any
@@ -61,7 +61,7 @@ and syntax-highlighted; piped, it stays compact (one line) so it pipes cleanly i
   or `--raw` to print the sources in config-file format (one per line, with any inline tokens) — ready
   to paste into the multiline `GH_COPILOT_INSTRUCTIONS` Codespaces secret.
 - **`source remove`** identifies a source the same way `source add` does — an `owner/repo` (optionally
-  with `--ref`/`--path`), a GitHub blob or tree URL, a gist (`gist/<id>` or a `gist.github.com` URL) —
+  with `--ref`/`--path`), a GitHub blob or tree URL, a gist (`gist:<id>` or a `gist.github.com` URL) —
   or by its **slug** (the `SLUG` column of `source list`). `source remove` / `source remove --all` only
   ever delete files this tool installed (they live under the `~/.copilot/instructions/gh-copilot-instructions/`
   directory) — your own hand-written instruction files are never touched.
@@ -104,12 +104,12 @@ gh copilot-instructions add https://github.com/owner/repo/tree/main/instructions
 ```
 
 You can also `add` a **gist** as a source. A gist is fetched via the Gists API and stored as
-`gist/<id>`; because gists are flat (no directories), `:path`/`--path` is a **filename glob** and
-`@ref`/`--ref` pins a specific gist **version**. Both the bare `gist/<id>` form and a
-`gist.github.com` URL work:
+`gist:<id>`; because gists are flat (no directories), `:path`/`--path` is a **filename glob** and
+`@ref`/`--ref` pins a specific gist **version**. Both the bare `gist:<id>` form and a
+`gist.github.com` URL work; in the source list a gist shows as `<owner>/gist:<id>`:
 
 ```
-gh copilot-instructions add gist/aa5a315d61ae9438b18d                          # latest version, default path
+gh copilot-instructions add gist:aa5a315d61ae9438b18d                          # latest version, default path
 gh copilot-instructions add https://gist.github.com/octocat/aa5a315d61ae9438b18d --path '*.md'
 ```
 
