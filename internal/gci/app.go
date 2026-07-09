@@ -800,9 +800,9 @@ func (a *App) applyPullOutcome(st *State, s Source, origin ConfigOrigin, out pul
 		if out.renamed != nil {
 			_ = a.Paths.ReplaceSource(s, *out.renamed) // best-effort; state already migrated
 		}
-		return fmt.Sprintf("%s  is now %s. Updated the config file to follow it.", out.renamedFrom, out.renamedTo)
+		return fmt.Sprintf("%s is now %s. Your configuration file was updated to reflect the change.", out.renamedFrom, out.renamedTo)
 	}
-	return fmt.Sprintf("%s  is now %s. Change %s to %s in %s.", out.renamedFrom, out.renamedTo, out.renamedFrom, out.renamedTo, EnvSources)
+	return fmt.Sprintf("%s is now %s. Change %s to %s in %s.", out.renamedFrom, out.renamedTo, out.renamedFrom, out.renamedTo, EnvSources)
 }
 
 // writeInstall writes one file at a forward-slash dest path relative to the

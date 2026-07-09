@@ -1110,7 +1110,7 @@ func TestPullFollowsRenameFile(t *testing.T) {
 		t.Fatalf("state not migrated to new slug: %+v", ss)
 	}
 	// File-origin warning copy.
-	if out := a.Err.(*bytes.Buffer).String(); !strings.Contains(out, "acme/foo  is now acme/bar. Updated the config file to follow it.") {
+	if out := a.Err.(*bytes.Buffer).String(); !strings.Contains(out, "acme/foo is now acme/bar. Your configuration file was updated to reflect the change.") {
 		t.Fatalf("missing file rename warning, got:\n%s", out)
 	}
 }
@@ -1138,7 +1138,7 @@ func TestPullRenameEnvWarnsNoRewrite(t *testing.T) {
 	if _, ok := st.Sources[oldID]; !ok {
 		t.Fatalf("env source state should stay under the original slug: %+v", st.Sources)
 	}
-	if out := a.Err.(*bytes.Buffer).String(); !strings.Contains(out, "acme/foo  is now acme/bar. Change acme/foo to acme/bar in "+EnvSources+".") {
+	if out := a.Err.(*bytes.Buffer).String(); !strings.Contains(out, "acme/foo is now acme/bar. Change acme/foo to acme/bar in "+EnvSources+".") {
 		t.Fatalf("missing env rename warning, got:\n%s", out)
 	}
 }
