@@ -66,14 +66,16 @@ func rootCmd() *cobra.Command {
 	// Hidden top-level aliases keep common commands reachable under short names
 	// (e.g. `add` == `source add`, `sources` == `source list`). Each is an
 	// independent command instance sharing the same behavior; the alias helper
-	// renames it and hides it from help. Keep in sync with topLevelShortcuts,
-	// which documents them in the root help.
+	// renames it and hides it from help. Ordered (like topLevelShortcuts, which
+	// documents them in the root help) by the underlying command's place in the
+	// COMMANDS section - top-level order (file before source), then subcommand
+	// order within each.
 	root.AddCommand(
-		alias("add", "source add", addCmd()),
-		alias("remove", "source remove", removeCmd()),
-		alias("pull", "source pull", pullCmd()),
-		alias("sources", "source list", listCmd()),
 		alias("files", "file list", fileListCmd()),
+		alias("add", "source add", addCmd()),
+		alias("sources", "source list", listCmd()),
+		alias("pull", "source pull", pullCmd()),
+		alias("remove", "source remove", removeCmd()),
 	)
 	applyGHStyle(root)
 	return root

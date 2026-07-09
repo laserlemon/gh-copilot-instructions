@@ -11,13 +11,15 @@ import (
 
 // topLevelShortcuts documents the hidden top-level aliases shown in the root
 // help's SHORTCUTS section. Keep in sync with the hidden alias commands
-// registered in rootCmd.
+// registered in rootCmd. Ordered by the underlying command's place in the
+// COMMANDS section: top-level order (file before source), then subcommand order
+// within each (source: add, list, pull, remove).
 var topLevelShortcuts = []struct{ Alias, Equiv string }{
-	{"add", "source add"},
-	{"remove", "source remove"},
-	{"pull", "source pull"},
-	{"sources", "source list"},
 	{"files", "file list"},
+	{"add", "source add"},
+	{"sources", "source list"},
+	{"pull", "source pull"},
+	{"remove", "source remove"},
 }
 
 // argDoc documents one positional argument for the help's ARGUMENTS section.

@@ -40,8 +40,8 @@ gh copilot-instructions doctor [--json]                                     # ru
 
 The source-management commands live under `source` (`source list`, `source add`, `source pull`,
 `source remove`) and the installed files under `file` (`file list`). For convenience several bare
-names work as top-level aliases: `add` → `source add`, `remove` → `source remove`, `pull` →
-`source pull`, `sources` → `source list`, and `files` → `file list`. Running
+names work as top-level aliases: `files` → `file list`, `add` → `source add`, `sources` →
+`source list`, `pull` → `source pull`, and `remove` → `source remove`. Running
 `gh copilot-instructions` with no command lists your sources once any are configured, and shows
 help on a fresh install.
 
